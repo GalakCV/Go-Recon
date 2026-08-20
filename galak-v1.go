@@ -156,3 +156,4 @@ func HttpxStatus(empresa string) {
 	}
 	fmt.Printf("[+] Status codes salvos em: %s\n", outputFile)
 }
+
