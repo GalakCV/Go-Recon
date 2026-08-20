@@ -18,16 +18,9 @@ func main() {
 	CriarAmbiente(nomeEmpresa)
 	fmt.Printf("[*] Lendo alvos do arquivo: %s\n", arquivoAlvos)
 
-	// 1. Etapa de Subdomínios
 	Subdominios(arquivoAlvos, nomeEmpresa)
-
-	// 2. Etapa de Resolução de Subdomínios com dnsx
 	ResolucaoSubdominios(nomeEmpresa)
-
-	// 3. Etapa de Validação Web com Httpx (Completo com tecnologia e jq)
 	Httpx(nomeEmpresa)
-
-	// 4. Etapa de Verificação Rápida de Status Code com Httpx
 	HttpxStatus(nomeEmpresa)
 }
 
@@ -156,4 +149,6 @@ func HttpxStatus(empresa string) {
 	}
 	fmt.Printf("[+] Status codes salvos em: %s\n", outputFile)
 }
+
+
 
