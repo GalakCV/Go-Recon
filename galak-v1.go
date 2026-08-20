@@ -18,8 +18,17 @@ func main() {
 	CriarAmbiente(nomeEmpresa)
 	fmt.Printf("[*] Lendo alvos do arquivo: %s\n", arquivoAlvos)
 
-	// Chamando a função de subdomínios passando o arquivo e a empresa
+	// 1. Etapa de Subdomínios
 	Subdominios(arquivoAlvos, nomeEmpresa)
+
+	// 2. Etapa de Resolução de Subdomínios com dnsx
+	ResolucaoSubdominios(nomeEmpresa)
+
+	// 3. Etapa de Validação Web com Httpx (Completo com tecnologia e jq)
+	Httpx(nomeEmpresa)
+
+	// 4. Etapa de Verificação Rápida de Status Code com Httpx
+	HttpxStatus(nomeEmpresa)
 }
 
 func CriarAmbiente(empresa string) {
@@ -36,13 +45,9 @@ func CriarAmbiente(empresa string) {
 func Subdominios(arquivoAlvos string, empresa string) {
 	fmt.Println("[+] Buscando subdomínios com Subfinder...")
 
-	// Define o caminho de saída para salvar os subdomínios dentro da pasta da empresa
-	outputFile := filepath.Join(empresa, "resultados", "subdomains.txt")
+	outputFile := filepath.Join(empresa, "resultados", "subdominios.txt")
 
-	// Monta o comando usando a flag -dL para ler a lista de domínios e -o para o arquivo de saída
 	cmd := exec.Command("subfinder", "-dL", arquivoAlvos, "-o", outputFile, "-silent", "-all")
-
-	// Executa e direciona a saída padrão para o terminal também (opcional)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -52,4 +57,102 @@ func Subdominios(arquivoAlvos string, empresa string) {
 		return
 	}
 	fmt.Printf("[+] Subdomínios salvos em: %s\n", outputFile)
+}
+
+func ResolucaoSubdominios(empresa string) {
+	fmt.Println("[+] Realizando resolução de subdomínios com dnsx...")
+
+	inputFile := filepath.Join(empresa, "resultados", "subdominios.txt")
+	outputFile := filepath.Join(empresa, "resultados", "resolvidos.txt")
+
+	cmd := exec.Command("dnsx", "-l", inputFile, "-t", "200", "-retry", "2", "-o", outputFile, "-silent")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("[-] Erro ao executar o dnsx: %v\n", err)
+		return
+	}
+	fmt.Printf("[+] Subdomínios resolvidos salvos em: %s\n", outputFile)
+}
+
+func Httpx(empresa string) {
+	fmt.Println("[+] Executando o httpx para validação de hosts web (tecnologias e detalhes)...")
+
+	inputFile := filepath.Join(empresa, "resultados", "resolvidos.txt")
+	outputFile := filepath.Join(empresa, "resultados", "httpx.txt")
+
+	cmd := exec.Command("httpx", 
+		"-l", inputFile, 
+		"-silent", 
+		"-timeout", "10", 
+		"-json", 
+		"-sc", 
+		"-td", 
+		"-title", 
+		"-server", 
+		"-location", 
+		"-cl", 
+		"-tls-probe", 
+		"-o", outputFile,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("[-] Erro ao executar o httpx: %v\n", err)
+		return
+	}
+
+	tempFile := outputFile + ".tmp"
+	jqCmd := exec.Command("jq", "-s", ".", outputFile)
+	
+	outFile, err := os.Create(tempFile)
+	if err != nil {
+		fmt.Printf("[-] Erro ao criar arquivo temporário: %v\n", err)
+		return
+	}
+	jqCmd.Stdout = outFile
+	jqCmd.Stderr = os.Stderr
+
+	err = jqCmd.Run()
+	outFile.Close()
+	if err != nil {
+		fmt.Printf("[-] Erro ao formatar com jq: %v\n", err)
+		return
+	}
+
+	err = os.Rename(tempFile, outputFile)
+	if err != nil {
+		fmt.Printf("[-] Erro ao atualizar o arquivo final: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[+] Resultados do httpx formatados em JSON salvos em: %s\n", outputFile)
+}
+
+func HttpxStatus(empresa string) {
+	fmt.Println("[+] Executando o httpx para verificação rápida de Status Code...")
+
+	inputFile := filepath.Join(empresa, "resultados", "resolvidos.txt")
+	outputFile := filepath.Join(empresa, "resultados", "statuscode-httpx.txt")
+
+	cmd := exec.Command("httpx", 
+		"-l", inputFile, 
+		"-silent", 
+		"-sc", 
+		"-o", outputFile,
+	)
+	
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("[-] Erro ao executar o httpx de status code: %v\n", err)
+		return
+	}
+	fmt.Printf("[+] Status codes salvos em: %s\n", outputFile)
 }
