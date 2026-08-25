@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoRecon Dashboard</title>
+    <style>
+        :root { --bg: #121212; --panel: #1e1e1e; --text: #e0e0e0; --accent: #00ff88; --border: #333; }
+        body { background-color: var(--bg); color: var(--text); font-family: 'Consolas', 'Courier New', monospace; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 10px 20px; cursor: pointer; border-radius: 4px; font-weight: bold; transition: 0.2s; }
+        button:hover, button.active { background: var(--accent); color: #000; }
+        input[type="text"] { width: 100%; padding: 15px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 4px; margin-bottom: 20px; box-sizing: border-box; font-size: 16px; }
+        input[type="text"]:focus { outline: none; border-color: var(--accent); }
+        table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 4px; overflow: hidden; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: #252525; color: var(--accent); }
+        tr:hover { background: #2a2a2a; }
+        .badge { background: #333; padding: 3px 8px; border-radius: 12px; font-size: 12px; color: #aaa;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>[ GoRecon ] Attack Surface Dashboard</h1>
+        
+        <div class="tabs">
+            <button class="active" onclick="mudarTabela('subdominios', this)">Subdomínios</button>
+            <button onclick="mudarTabela('status', this)">Status Code</button>
+            <button onclick="mudarTabela('tecnologias', this)">Tecnologias</button>
+            <button onclick="mudarTabela('vetores', this)">Vetores de Ataque</button>
+        </div>
+
+        <input type="text" id="searchBox" placeholder="Filtre por 'api', 'dev', '200' ou 'xss' e aperte Enter..." onkeyup="seEnter(event)">
+
+        <table id="dataTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let tabelaAtual = 'subdominios';
+
+        function mudarTabela(tabela, btnElement) {
+            tabelaAtual = tabela;
+            document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+            btnElement.classList.add('active');
+            document.getElementById('searchBox').value = '';
+            carregarDados();
+        }
+
+        function seEnter(e) {
+            if (e.key === 'Enter') carregarDados();
+        }
+
+        async function carregarDados() {
+            const busca = document.getElementById('searchBox').value;
+            const res = await fetch(`/api/dados?tabela=${tabelaAtual}&search=${encodeURIComponent(busca)}`);
+            const dados = await res.json();
+            
+            const head = document.getElementById('tableHead');
+            const body = document.getElementById('tableBody');
+            head.innerHTML = ''; body.innerHTML = '';
+
+            if (!dados || dados.length === 0) {
+                body.innerHTML = '<tr><td colspan="5">Nenhum dado encontrado.</td></tr>';
+                return;
+            }
+            if (tabelaAtual === 'subdominios') {
+                head.innerHTML = '<tr><th>ID</th><th>Host</th></tr>';
+                dados.forEach(d => body.innerHTML += `<tr><td>${d.ID}</td><td><a href="http://${d.Host}" target="_blank" style="color:var(--text)">${d.Host}</a></td></tr>`);
+            } else if (tabelaAtual === 'status') {
+                head.innerHTML = '<tr><th>Subdomínio</th><th>Código HTTP</th></tr>';
+                dados.forEach(d => {
+                    let color = d.StatusCode.startsWith('2') ? '#00ff88' : d.StatusCode.startsWith('3') ? '#ffd700' : '#ff4444';
+                    body.innerHTML += `<tr><td>${d.Subdominio}</td><td><strong style="color:${color}">${d.StatusCode}</strong></td></tr>`;
+                });
+            } else if (tabelaAtual === 'tecnologias') {
+                head.innerHTML = '<tr><th>Subdomínio</th><th>Stack Detectada</th></tr>';
+                dados.forEach(d => {
+                    let techs = d.Tecnologias.split(',').map(t => t.trim() ? `<span class="badge">${t}</span>` : '').join(' ');
+                    body.innerHTML += `<tr><td>${d.Subdominio}</td><td>${techs || '<span class="badge">Nenhuma</span>'}</td></tr>`;
+                });
+            } else if (tabelaAtual === 'vetores') {
+                head.innerHTML = '<tr><th>Vetor</th><th>URL Alvo</th></tr>';
+                dados.forEach(d => {
+                    let color = '#ff4444';
+                    body.innerHTML += `<tr><td><strong style="color:${color}">[${d.Tipo.toUpperCase()}]</strong></td><td>${d.URL}</td></tr>`;
+                });
+            }
+        }
+        carregarDados();
+    </script>
+</body>
+</html>

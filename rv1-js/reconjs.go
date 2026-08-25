@@ -13,23 +13,6 @@ import (
 
 const tamanhoMaximoScanner = 1024 * 1024
 
-// ColetarJS executa o Katana e coleta candidatos a arquivos JavaScript.
-//
-// Fluxo:
-//
-//  status200.txt
-//       ↓
-//  Katana -jc
-//       ↓
-//  filtro estrutural de URL
-//       ↓
-//  normalização
-//       ↓
-//  deduplicação
-//       ↓
-//  remoção de JS claramente externo/infra
-//       ↓
-//  js-candidates.txt
 func ColetarJS(ctx context.Context, empresa string) {
 	fmt.Println("[+] Executando o Katana para descoberta de JavaScript...")
 
@@ -49,11 +32,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 		return
 	}
 
-	// Katana:
-	//
-	// -list → lê as URLs descobertas
-	// -jc   → crawl JavaScript
-	// -silent → somente resultados
 	cmd := exec.CommandContext(
 		ctx,
 		"katana",
@@ -96,7 +74,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 		tamanhoMaximoScanner,
 	)
 
-	// Deduplicação.
 	visitadas := make(map[string]struct{})
 
 	var total int
@@ -121,8 +98,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 			continue
 		}
 
-		// URLs de infraestrutura/challenge são descartadas
-		// antes de chegar ao httpx.
 		if ehInfraestruturaJS(urlNormalizada) {
 			infraestrutura++
 			continue
@@ -143,7 +118,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 		candidatas++
 	}
 
-	// Erro do scanner.
 	if err := scanner.Err(); err != nil {
 		if ctx.Err() == context.Canceled {
 			fmt.Println("\n[!] Katana cancelado pelo usuário (CTRL + C). Avançando...")
@@ -158,7 +132,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 		return
 	}
 
-	// Aguarda Katana terminar.
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() == context.Canceled {
 			fmt.Println("\n[!] Katana cancelado pelo usuário (CTRL + C). Avançando...")
@@ -179,20 +152,6 @@ func ColetarJS(ctx context.Context, empresa string) {
 	fmt.Printf("[+] Salvo em: %s\n", outputJS)
 }
 
-// normalizarURLJS valida e normaliza uma URL candidata a JavaScript.
-//
-// Aceita:
-//
-//  https://site.com/app.js
-//  https://site.com/app.js?v=123
-//  https://site.com/static/main.JS
-//
-// Rejeita:
-//
-//  https://site.com/
-//  https://site.com/app.css
-//  https://site.com/api
-//  https://site.com/app.js/
 func normalizarURLJS(raw string) (string, bool) {
 	raw = strings.TrimSpace(raw)
 
@@ -212,46 +171,23 @@ func normalizarURLJS(raw string) (string, bool) {
 		return "", false
 	}
 
-	// Verifica SOMENTE o path.
-	//
-	// Query string não interfere:
-	//
-	// /app.js?v=123
-	//
-	// continua sendo JS.
 	caminho := strings.ToLower(parsed.Path)
 
 	if !strings.HasSuffix(caminho, ".js") {
 		return "", false
 	}
-
-	// Evita /app.js/ porque o path não representa
-	// diretamente um arquivo JS.
 	if strings.HasSuffix(parsed.Path, "/") {
 		return "", false
 	}
 
-	// Fragmentos nunca são enviados ao servidor.
 	parsed.Fragment = ""
 
-	// Normalização básica.
 	parsed.Scheme = scheme
 	parsed.Host = strings.ToLower(parsed.Host)
 
 	return parsed.String(), true
 }
 
-// ehInfraestruturaJS identifica URLs que são claramente
-// infraestrutura de CDN/WAF/challenge/captcha.
-//
-// IMPORTANTE:
-//
-// Não descartamos simplesmente "cloudflare", "cdn", etc.
-// Um JS servido por CDN pode ser extremamente importante
-// para a aplicação.
-//
-// Aqui descartamos somente caminhos que normalmente
-// representam infraestrutura/challenge.
 func ehInfraestruturaJS(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -275,8 +211,6 @@ func ehInfraestruturaJS(rawURL string) bool {
 		}
 	}
 
-	// Alguns endpoints de challenge podem aparecer
-	// com nomes característicos.
 	indicadores := []string{
 		"challenge",
 		"captcha",
@@ -334,44 +268,15 @@ func ValidarJS(ctx context.Context, empresa string) {
 		return
 	}
 
-	// httpx atual:
-	//
-	// -l input
-	// -silent
-	// -mc 200
-	// -ct
-	// -cl
-	// -fpt → classificação de tipo de página
-	// -fep → filtro ML de páginas de erro
-	// -fd  → remove respostas praticamente duplicadas
-	//
-	// NÃO usamos mais a regex gigante de WAF.
 	args := []string{
 		"-l", inputJS,
 		"-silent",
-
-		// Somente HTTP 200.
 		"-mc", "200",
-
-		// Precisamos do Content-Type para confirmar JS.
 		"-ct",
-
-		// Mantemos content-length no output para diagnóstico.
 		"-cl",
-
-		// Remove páginas classificadas como login/captcha/etc.
 		"-fpt", "login,captcha,parked",
-
-		// Filtro de páginas de erro baseado em ML.
-		//
-		// Em versões recentes do httpx, -fep é deprecated
-		// em favor de -fpt, mas ainda é suportado.
 		"-fep",
-
-		// Remove respostas praticamente duplicadas.
 		"-fd",
-
-		// User-Agent de navegador.
 		"-H",
 		"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 	}
@@ -439,13 +344,6 @@ func ValidarJS(ctx context.Context, empresa string) {
 		}
 
 		testadas++
-
-		// Formato esperado:
-		//
-		// https://site.com/app.js [application/javascript] [4821]
-		//
-		// Procuramos o primeiro "[" para separar a URL
-		// dos metadados do httpx.
 		idx := strings.Index(linha, "[")
 
 		if idx == -1 {
@@ -463,31 +361,14 @@ func ValidarJS(ctx context.Context, empresa string) {
 		if urlEncontrada == "" {
 			continue
 		}
-
-		// Confirmamos que o Content-Type possui
-		// indicação de JavaScript.
-		//
-		// Exemplos aceitos:
-		//
-		// application/javascript
-		// text/javascript
-		// application/x-javascript
-		//
 		if !contentTypeJavaScript(metadados) {
 			rejeitadosContentType++
 			continue
 		}
-
-		// Segurança adicional:
-		//
-		// Mesmo que alguma infraestrutura tenha passado
-		// pelo primeiro filtro, não queremos colocá-la
-		// em js-validos.txt.
 		if ehInfraestruturaJS(urlEncontrada) {
 			continue
 		}
 
-		// Deduplicação final.
 		if _, existe := visitados[urlEncontrada]; existe {
 			continue
 		}
@@ -562,15 +443,6 @@ func ValidarJS(ctx context.Context, empresa string) {
 	)
 }
 
-// contentTypeJavaScript verifica se os metadados
-// retornados pelo httpx indicam JavaScript.
-//
-// Não usamos simplesmente:
-//
-//  strings.Contains(metadados, "javascript")
-//
-// porque alguns servidores podem devolver informações
-// adicionais nos metadados.
 func contentTypeJavaScript(metadados string) bool {
 	tipos := []string{
 		"application/javascript",
