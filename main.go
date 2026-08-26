@@ -15,7 +15,8 @@ import (
 	//"go-recon/rv1-crawling"
 	//rv1tecnologia "go-recon/rv1-tecnologia"
 	//go-recon/rv1-validacao"
-	//"go-recon/database_create"
+	"go-recon/database_create"
+	rv1cloud "go-recon/rv1-cloud"
 	"go-recon/recon-dash"
 )
 
@@ -99,13 +100,18 @@ func main() {
 			nome: "Purificação e Separação de Vetores (Uro + GF)",
 			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, nomeEmpresa) }, 
 		},
-		
+		*/
+
+		{
+			nome: "Cloud Recon (S3 / GCS / Azure Blob)",
+			fn:   func(ctx context.Context) { rv1cloud.CloudRecon(ctx, nomeEmpresa) },
+		},
+
 		{
 			nome: "Exportação para Banco de Dados SQLite",
 			fn:   func(ctx context.Context) { rv1db.PopularBanco(ctx, nomeEmpresa) },
 
 		},
-		*/
 	
 	}
 

@@ -5,92 +5,429 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GoRecon Dashboard</title>
     <style>
-        :root { --bg: #121212; --panel: #1e1e1e; --text: #e0e0e0; --accent: #00ff88; --border: #333; }
-        body { background-color: var(--bg); color: var(--text); font-family: 'Consolas', 'Courier New', monospace; margin: 0; padding: 20px; }
+        :root { --bg: #121212; --panel: #1e1e1e; --text: #e0e0e0; --accent: #00ff88; --border: #333; --danger: #ff4444; --warn: #ffd700; }
+        * { box-sizing: border-box; }
+        body { background-color: var(--bg); color: var(--text); font-family: 'Consolas', 'Courier New', monospace; margin: 0; padding: 16px; }
         .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        button { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 10px 20px; cursor: pointer; border-radius: 4px; font-weight: bold; transition: 0.2s; }
-        button:hover, button.active { background: var(--accent); color: #000; }
-        input[type="text"] { width: 100%; padding: 15px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 4px; margin-bottom: 20px; box-sizing: border-box; font-size: 16px; }
+        h1 { color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 10px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 20px; }
+        #totalBadge { font-size: 13px; color: #888; font-weight: normal; white-space: nowrap; }
+
+        /* Cards de resumo */
+        .resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 18px 0; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; cursor: pointer; transition: 0.15s; }
+        .card:hover { border-color: var(--accent); }
+        .card .num { font-size: 22px; font-weight: bold; color: var(--accent); display: block; }
+        .card .label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+        button { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 9px 16px; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 13px; transition: 0.2s; }
+        button:hover:not(:disabled), button.active { background: var(--accent); color: #000; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        input[type="text"] { width: 100%; padding: 13px 15px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 4px; margin-bottom: 12px; font-size: 15px; }
         input[type="text"]:focus { outline: none; border-color: var(--accent); }
-        table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 4px; overflow: hidden; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); }
-        th { background: #252525; color: var(--accent); }
+
+        /* Checkboxes de filtro por vetor de vulnerabilidade */
+        #vetorFiltros { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+        #vetorFiltros.ativo { display: flex; }
+        .chk-vetor { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 5px 10px 5px 8px; font-size: 12px; cursor: pointer; user-select: none; }
+        .chk-vetor input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+        .chk-vetor.marcado { border-color: var(--accent); color: var(--accent); }
+        #vetorFiltrosAcoes { font-size: 12px; color: #888; display: flex; gap: 10px; align-items: center; }
+        #vetorFiltrosAcoes a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+        /* Filtros inteligentes: tags agrupadas por padrão buscado na URL */
+        #filtrosInteligentes { display: none; flex-direction: column; gap: 10px; margin-bottom: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+        #filtrosInteligentes.ativo { display: flex; }
+        .fi-grupo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+        .fi-titulo { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; min-width: 74px; }
+        .fi-tag { background: #252525; border: 1px solid var(--border); color: var(--text); padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.15s; }
+        .fi-tag:hover { border-color: var(--accent); }
+        .fi-tag.ativo { background: var(--accent); color: #000; border-color: var(--accent); }
+        .fi-tag.fi-lixo.ativo { background: var(--danger); border-color: var(--danger); color: #fff; }
+        .fi-rodape { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 8px; font-size: 12px; color: #888; }
+        .fi-rodape a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+        .table-wrap { width: 100%; overflow-x: auto; border-radius: 4px; border: 1px solid var(--border); }
+        table { width: 100%; min-width: 480px; border-collapse: collapse; background: var(--panel); }
+        th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); word-break: break-word; overflow-wrap: anywhere; font-size: 13px; }
+        th { background: #252525; color: var(--accent); position: sticky; top: 0; white-space: nowrap; }
         tr:hover { background: #2a2a2a; }
-        .badge { background: #333; padding: 3px 8px; border-radius: 12px; font-size: 12px; color: #aaa;}
+        .badge { background: #333; padding: 3px 8px; border-radius: 12px; font-size: 11px; color: #aaa; display: inline-block; margin: 2px; }
+
+        .paginacao { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 15px; color: #aaa; font-size: 13px; }
+        .paginacao .controles { display: flex; gap: 8px; align-items: center; }
+        .paginacao button { padding: 6px 14px; }
+        .loading { opacity: 0.5; pointer-events: none; }
+        select { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 4px; font-size: 13px; }
+
+        @media (max-width: 560px) {
+            body { padding: 10px; }
+            h1 { font-size: 17px; }
+            button { padding: 8px 12px; font-size: 12px; }
+            th, td { padding: 8px 10px; font-size: 12px; }
+            .paginacao { flex-direction: column; align-items: stretch; }
+            .paginacao .controles { justify-content: space-between; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>[ GoRecon ] Attack Surface Dashboard</h1>
-        
+        <h1>[ GoRecon ] Attack Surface Dashboard <span id="totalBadge"></span></h1>
+
+        <div class="resumo" id="resumoCards"></div>
+
         <div class="tabs">
             <button class="active" onclick="mudarTabela('subdominios', this)">Subdomínios</button>
+            <button onclick="mudarTabela('resolvidos', this)">Resolvidos</button>
             <button onclick="mudarTabela('status', this)">Status Code</button>
             <button onclick="mudarTabela('tecnologias', this)">Tecnologias</button>
             <button onclick="mudarTabela('vetores', this)">Vetores de Ataque</button>
+            <button onclick="mudarTabela('cloud', this)">Cloud Recon</button>
         </div>
 
-        <input type="text" id="searchBox" placeholder="Filtre por 'api', 'dev', '200' ou 'xss' e aperte Enter..." onkeyup="seEnter(event)">
+        <input type="text" id="searchBox" placeholder="Filtre por 'api', 'dev', '200' ou 'xss'..." oninput="onBusca()" onkeyup="seEnter(event)">
 
-        <table id="dataTable">
-            <thead id="tableHead"></thead>
-            <tbody id="tableBody"></tbody>
-        </table>
+        <!-- Checkboxes só aparecem na aba "Vetores de Ataque", populados dinamicamente via /api/vetores/tipos -->
+        <div id="vetorFiltros"></div>
+
+        <!-- Filtros inteligentes (tags por padrão de URL) — só na aba "Vetores de Ataque" -->
+        <div id="filtrosInteligentes">
+            <div class="fi-grupo">
+                <span class="fi-titulo">Tecnologias</span>
+                <button class="fi-tag" onclick="toggleFiltro('php', this)">PHP</button>
+                <button class="fi-tag" onclick="toggleFiltro('wp', this)">WP</button>
+                <button class="fi-tag" onclick="toggleFiltro('apis', this)">APIs</button>
+                <button class="fi-tag" onclick="toggleFiltro('sensiveis', this)">Sensíveis</button>
+            </div>
+            <div class="fi-grupo">
+                <span class="fi-titulo">Alto risco</span>
+                <button class="fi-tag" onclick="toggleFiltro('lfi_rce', this)">LFI/RCE</button>
+                <button class="fi-tag" onclick="toggleFiltro('ssrf_redirect', this)">SSRF/Redirect</button>
+                <button class="fi-tag" onclick="toggleFiltro('sqli_idor', this)">SQLi/IDOR</button>
+            </div>
+            <div class="fi-grupo">
+                <span class="fi-titulo">Ambiente</span>
+                <button class="fi-tag" onclick="toggleFiltro('dev_test', this)">Dev/Test</button>
+                <button class="fi-tag" onclick="toggleFiltro('admin', this)">Admin</button>
+                <button class="fi-tag" onclick="toggleFiltro('api_old', this)">APIs Antigas</button>
+            </div>
+            <div class="fi-rodape">
+                <button class="fi-tag fi-lixo" id="btnLimparLixo" onclick="toggleLimparLixo()">🧹 Limpar Lixo (.js/.css/.png...)</button>
+                <a onclick="limparFiltrosInteligentes()">limpar tags inteligentes</a>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table id="dataTable">
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+
+        <div class="paginacao">
+            <div>
+                Página <span id="paginaAtual">1</span> de <span id="totalPaginas">1</span>
+                &nbsp;·&nbsp;
+                <select id="limitSelect" onchange="onLimitChange()">
+                    <option value="25">25 por página</option>
+                    <option value="50" selected>50 por página</option>
+                    <option value="100">100 por página</option>
+                    <option value="200">200 por página</option>
+                </select>
+            </div>
+            <div class="controles">
+                <button id="btnAnterior" onclick="irPagina(paginaAtual - 1)">&laquo; Anterior</button>
+                <button id="btnProxima" onclick="irPagina(paginaAtual + 1)">Próxima &raquo;</button>
+            </div>
+        </div>
     </div>
 
     <script>
         let tabelaAtual = 'subdominios';
+        let paginaAtual = 1;
+        let totalPaginasAtual = 1;
+        let debounceTimer = null;
+        let requisicaoAtual = 0; // evita "race condition": resposta antiga sobrescrevendo a nova
+        let tiposVetorCarregados = false;
+        let tiposVetorSelecionados = new Set(); // vazio = sem filtro (todos)
+        let filtrosInteligentesSelecionados = new Set(); // tags ativas (php, dev_test, ...)
+        let limparLixoAtivo = false;
+        function escapeHTML(valor) {
+            const div = document.createElement('div');
+            div.textContent = valor ?? '';
+            return div.innerHTML;
+        }
 
         function mudarTabela(tabela, btnElement) {
             tabelaAtual = tabela;
-            document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+            paginaAtual = 1;
+            document.querySelectorAll('.tabs button').forEach(btn => btn.classList.remove('active'));
             btnElement.classList.add('active');
             document.getElementById('searchBox').value = '';
+
+            const painelFiltros = document.getElementById('vetorFiltros');
+            const painelInteligente = document.getElementById('filtrosInteligentes');
+            if (tabela === 'vetores') {
+                painelFiltros.classList.add('ativo');
+                painelInteligente.classList.add('ativo');
+                if (!tiposVetorCarregados) carregarTiposVetor();
+            } else {
+                painelFiltros.classList.remove('ativo');
+                painelInteligente.classList.remove('ativo');
+            }
+            carregarDados();
+        }
+
+        // Alterna uma tag de filtro inteligente (multi-seleção: cada tag
+        // ativa some ao request como mais uma condição AND no backend).
+        function toggleFiltro(chave, btnElement) {
+            if (filtrosInteligentesSelecionados.has(chave)) {
+                filtrosInteligentesSelecionados.delete(chave);
+                btnElement.classList.remove('ativo');
+            } else {
+                filtrosInteligentesSelecionados.add(chave);
+                btnElement.classList.add('ativo');
+            }
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function toggleLimparLixo() {
+            limparLixoAtivo = !limparLixoAtivo;
+            document.getElementById('btnLimparLixo').classList.toggle('ativo', limparLixoAtivo);
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function limparFiltrosInteligentes() {
+            filtrosInteligentesSelecionados.clear();
+            document.querySelectorAll('.fi-tag:not(.fi-lixo)').forEach(b => b.classList.remove('ativo'));
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        // Busca os tipos de vetor existentes no banco (ssrf, xss, sqli...) e monta
+        // um checkbox pra cada um, em vez de fixar uma lista estática no HTML.
+        async function carregarTiposVetor() {
+            try {
+                const res = await fetch('/api/vetores/tipos');
+                const tipos = await res.json();
+                tiposVetorCarregados = true;
+
+                const painel = document.getElementById('vetorFiltros');
+                if (!tipos || tipos.length === 0) {
+                    painel.innerHTML = '<span style="color:#888;font-size:12px;">Nenhum vetor encontrado ainda.</span>';
+                    return;
+                }
+
+                const labels = tipos.map(t => {
+                    const idSeguro = 'chk_' + t.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    return `<label class="chk-vetor" id="lbl_${idSeguro}">
+                        <input type="checkbox" id="${idSeguro}" value="${escapeHTML(t)}" onchange="onToggleVetor('${escapeHTML(t)}', '${idSeguro}')">
+                        ${escapeHTML(t.toUpperCase())}
+                    </label>`;
+                }).join('');
+
+                painel.innerHTML = labels + `
+                    <span id="vetorFiltrosAcoes">
+                        <a onclick="limparFiltroVetores()">limpar filtros</a>
+                    </span>`;
+            } catch (e) {
+                document.getElementById('vetorFiltros').innerHTML = '<span style="color:var(--danger);font-size:12px;">Erro ao carregar tipos de vetor.</span>';
+            }
+        }
+
+        function onToggleVetor(tipo, idSeguro) {
+            const chk = document.getElementById(idSeguro);
+            const lbl = document.getElementById('lbl_' + idSeguro);
+            if (chk.checked) {
+                tiposVetorSelecionados.add(tipo);
+                lbl.classList.add('marcado');
+            } else {
+                tiposVetorSelecionados.delete(tipo);
+                lbl.classList.remove('marcado');
+            }
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function limparFiltroVetores() {
+            tiposVetorSelecionados.clear();
+            document.querySelectorAll('#vetorFiltros input[type="checkbox"]').forEach(chk => {
+                chk.checked = false;
+                document.getElementById('lbl_' + chk.id).classList.remove('marcado');
+            });
+            paginaAtual = 1;
             carregarDados();
         }
 
         function seEnter(e) {
-            if (e.key === 'Enter') carregarDados();
+            if (e.key === 'Enter') {
+                clearTimeout(debounceTimer);
+                paginaAtual = 1;
+                carregarDados();
+            }
+        }
+
+        function onBusca() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                paginaAtual = 1;
+                carregarDados();
+            }, 350); // debounce: espera parar de digitar antes de bater na API
+        }
+
+        function onLimitChange() {
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function irPagina(pagina) {
+            if (pagina < 1 || pagina > totalPaginasAtual) return;
+            paginaAtual = pagina;
+            carregarDados();
+        }
+
+        // Cards de visão geral no topo (contagens por tabela). Clicar num card
+        // pula direto pra aba correspondente.
+        async function carregarResumo() {
+            try {
+                const res = await fetch('/api/resumo');
+                const r = await res.json();
+                const cards = document.getElementById('resumoCards');
+                const btns = document.querySelectorAll('.tabs button');
+
+                const dados = [
+                    { label: 'Subdomínios', valor: r.subdominios ?? 0, tabela: 'subdominios', idx: 0 },
+                    { label: 'Resolvidos', valor: r.resolvidos ?? 0, tabela: 'resolvidos', idx: 1 },
+                    { label: 'Status 200', valor: r.status_ok ?? 0, tabela: 'status', idx: 2 },
+                    { label: 'Tecnologias', valor: r.tecnologias ?? 0, tabela: 'tecnologias', idx: 3 },
+                    { label: 'Vetores', valor: r.vetores ?? 0, tabela: 'vetores', idx: 4 },
+                    { label: 'Cloud Recon', valor: r.cloud ?? 0, tabela: 'cloud', idx: 5 },
+                ];
+
+                cards.innerHTML = dados.map(d =>
+                    `<div class="card" onclick="mudarTabela('${d.tabela}', document.querySelectorAll('.tabs button')[${d.idx}])">
+                        <span class="num">${d.valor}</span>
+                        <span class="label">${d.label}</span>
+                    </div>`
+                ).join('');
+            } catch (e) {
+                // silencioso: cards de resumo são um extra, não bloqueiam o dashboard
+            }
         }
 
         async function carregarDados() {
             const busca = document.getElementById('searchBox').value;
-            const res = await fetch(`/api/dados?tabela=${tabelaAtual}&search=${encodeURIComponent(busca)}`);
-            const dados = await res.json();
-            
-            const head = document.getElementById('tableHead');
-            const body = document.getElementById('tableBody');
-            head.innerHTML = ''; body.innerHTML = '';
+            const limit = document.getElementById('limitSelect').value;
+            const table = document.getElementById('dataTable');
+            table.classList.add('loading');
 
-            if (!dados || dados.length === 0) {
-                body.innerHTML = '<tr><td colspan="5">Nenhum dado encontrado.</td></tr>';
+            const idRequisicao = ++requisicaoAtual;
+            let url = `/api/dados?tabela=${tabelaAtual}&search=${encodeURIComponent(busca)}&page=${paginaAtual}&limit=${limit}`;
+            if (tabelaAtual === 'vetores') {
+                if (tiposVetorSelecionados.size > 0) {
+                    url += `&tipos=${encodeURIComponent([...tiposVetorSelecionados].join(','))}`;
+                }
+                if (filtrosInteligentesSelecionados.size > 0) {
+                    url += `&filtros=${encodeURIComponent([...filtrosInteligentesSelecionados].join(','))}`;
+                }
+                if (limparLixoAtivo) {
+                    url += `&limpar_lixo=1`;
+                }
+            }
+
+            let resp;
+            try {
+                const res = await fetch(url);
+                resp = await res.json();
+            } catch (e) {
+                table.classList.remove('loading');
+                document.getElementById('tableBody').innerHTML = '<tr><td>Erro ao carregar dados.</td></tr>';
                 return;
             }
+
+            // Se o usuário já disparou outra busca enquanto esta respondia, descarta esta resposta.
+            if (idRequisicao !== requisicaoAtual) return;
+
+            const dados = resp.dados || [];
+            totalPaginasAtual = resp.total_paginas || 1;
+            paginaAtual = resp.pagina || 1;
+
+            document.getElementById('totalBadge').textContent = `${resp.total ?? 0} registros`;
+            document.getElementById('paginaAtual').textContent = paginaAtual;
+            document.getElementById('totalPaginas').textContent = totalPaginasAtual;
+            document.getElementById('btnAnterior').disabled = paginaAtual <= 1;
+            document.getElementById('btnProxima').disabled = paginaAtual >= totalPaginasAtual;
+
+            const head = document.getElementById('tableHead');
+            const body = document.getElementById('tableBody');
+
+            if (!dados || dados.length === 0) {
+                head.innerHTML = '';
+                body.innerHTML = '<tr><td>Nenhum dado encontrado.</td></tr>';
+                table.classList.remove('loading');
+                return;
+            }
+
+            // Monta as linhas em UM array e faz UM único innerHTML no final.
+            // O código antigo fazia `body.innerHTML += ...` dentro do loop, o que
+            // força o navegador a reparsear e re-renderizar a tabela inteira a
+            // cada linha adicionada (custo O(n²)) — essa era a causa do "travar".
+            const linhas = [];
+
             if (tabelaAtual === 'subdominios') {
                 head.innerHTML = '<tr><th>ID</th><th>Host</th></tr>';
-                dados.forEach(d => body.innerHTML += `<tr><td>${d.ID}</td><td><a href="http://${d.Host}" target="_blank" style="color:var(--text)">${d.Host}</a></td></tr>`);
+                for (const d of dados) {
+                    const host = escapeHTML(d.Host);
+                    linhas.push(`<tr><td>${d.ID}</td><td><a href="http://${host}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${host}</a></td></tr>`);
+                }
+            } else if (tabelaAtual === 'resolvidos') {
+                head.innerHTML = '<tr><th>ID</th><th>Host (resolveu DNS)</th></tr>';
+                for (const d of dados) {
+                    const host = escapeHTML(d.Host);
+                    linhas.push(`<tr><td>${d.ID}</td><td><a href="http://${host}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${host}</a></td></tr>`);
+                }
             } else if (tabelaAtual === 'status') {
                 head.innerHTML = '<tr><th>Subdomínio</th><th>Código HTTP</th></tr>';
-                dados.forEach(d => {
-                    let color = d.StatusCode.startsWith('2') ? '#00ff88' : d.StatusCode.startsWith('3') ? '#ffd700' : '#ff4444';
-                    body.innerHTML += `<tr><td>${d.Subdominio}</td><td><strong style="color:${color}">${d.StatusCode}</strong></td></tr>`;
-                });
+                for (const d of dados) {
+                    const codigo = escapeHTML(d.StatusCode);
+                    const color = d.StatusCode?.startsWith('2') ? '#00ff88' : d.StatusCode?.startsWith('3') ? '#ffd700' : '#ff4444';
+                    linhas.push(`<tr><td>${escapeHTML(d.Subdominio)}</td><td><strong style="color:${color}">${codigo}</strong></td></tr>`);
+                }
             } else if (tabelaAtual === 'tecnologias') {
                 head.innerHTML = '<tr><th>Subdomínio</th><th>Stack Detectada</th></tr>';
-                dados.forEach(d => {
-                    let techs = d.Tecnologias.split(',').map(t => t.trim() ? `<span class="badge">${t}</span>` : '').join(' ');
-                    body.innerHTML += `<tr><td>${d.Subdominio}</td><td>${techs || '<span class="badge">Nenhuma</span>'}</td></tr>`;
-                });
+                for (const d of dados) {
+                    const techs = (d.Tecnologias || '').split(',')
+                        .map(t => t.trim() ? `<span class="badge">${escapeHTML(t.trim())}</span>` : '')
+                        .join(' ');
+                    linhas.push(`<tr><td>${escapeHTML(d.Subdominio)}</td><td>${techs || '<span class="badge">Nenhuma</span>'}</td></tr>`);
+                }
             } else if (tabelaAtual === 'vetores') {
                 head.innerHTML = '<tr><th>Vetor</th><th>URL Alvo</th></tr>';
-                dados.forEach(d => {
-                    let color = '#ff4444';
-                    body.innerHTML += `<tr><td><strong style="color:${color}">[${d.Tipo.toUpperCase()}]</strong></td><td>${d.URL}</td></tr>`;
-                });
+                for (const d of dados) {
+                    linhas.push(`<tr><td><strong style="color:#ff4444">[${escapeHTML((d.Tipo || '').toUpperCase())}]</strong></td><td>${escapeHTML(d.URL)}</td></tr>`);
+                }
+            } else if (tabelaAtual === 'cloud') {
+                head.innerHTML = '<tr><th>Provedor</th><th>Bucket/Conta</th><th>Classificação</th><th>URL</th></tr>';
+                for (const d of dados) {
+                    const publico = (d.Classificacao || '').startsWith('Público');
+                    const cor = publico ? 'var(--danger)' : 'var(--warn)';
+                    linhas.push(`<tr>
+                        <td>${escapeHTML(d.Provider)}</td>
+                        <td><strong>${escapeHTML(d.Bucket)}</strong></td>
+                        <td><strong style="color:${cor}">${escapeHTML(d.Classificacao)}</strong> <span class="badge">HTTP ${d.StatusCode}</span></td>
+                        <td><a href="${escapeHTML(d.URL)}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${escapeHTML(d.URL)}</a></td>
+                    </tr>`);
+                }
             }
+
+            body.innerHTML = linhas.join('');
+            table.classList.remove('loading');
         }
+
+        carregarResumo();
         carregarDados();
     </script>
 </body>
