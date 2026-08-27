@@ -48,6 +48,16 @@
         .fi-rodape { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 8px; font-size: 12px; color: #888; }
         .fi-rodape a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
+        /* Filtro por tecnologia — mesma linguagem visual das tags inteligentes */
+        #techFiltros { display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; align-items: center; }
+        #techFiltros.ativo { display: flex; }
+        #techFiltros a { color: var(--accent); cursor: pointer; text-decoration: underline; font-size: 12px; margin-left: 6px; }
+
+        .badge-crit { background: var(--danger); color: #fff; }
+        .badge-high { background: #ff8800; color: #000; }
+        .badge-cdn { background: #2b6cb0; color: #fff; }
+        .badge-origem { background: #2f7d3c; color: #fff; }
+
         .table-wrap { width: 100%; overflow-x: auto; border-radius: 4px; border: 1px solid var(--border); }
         table { width: 100%; min-width: 480px; border-collapse: collapse; background: var(--panel); }
         th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); word-break: break-word; overflow-wrap: anywhere; font-size: 13px; }
@@ -79,14 +89,16 @@
 
         <div class="tabs">
             <button class="active" onclick="mudarTabela('subdominios', this)">Subdomínios</button>
-            <button onclick="mudarTabela('resolvidos', this)">Resolvidos</button>
-            <button onclick="mudarTabela('status', this)">Status Code</button>
-            <button onclick="mudarTabela('tecnologias', this)">Tecnologias</button>
+            <button onclick="mudarTabela('hosts', this)">Hosts</button>
             <button onclick="mudarTabela('vetores', this)">Vetores de Ataque</button>
             <button onclick="mudarTabela('cloud', this)">Cloud Recon</button>
+            <button onclick="mudarTabela('cdn', this)">CDN / IPs</button>
         </div>
 
         <input type="text" id="searchBox" placeholder="Filtre por 'api', 'dev', '200' ou 'xss'..." oninput="onBusca()" onkeyup="seEnter(event)">
+
+        <!-- Filtro por tecnologia — só na aba "Hosts", populado via /api/tecnologias/tipos -->
+        <div id="techFiltros"></div>
 
         <!-- Checkboxes só aparecem na aba "Vetores de Ataque", populados dinamicamente via /api/vetores/tipos -->
         <div id="vetorFiltros"></div>
@@ -153,6 +165,13 @@
         let tiposVetorSelecionados = new Set(); // vazio = sem filtro (todos)
         let filtrosInteligentesSelecionados = new Set(); // tags ativas (php, dev_test, ...)
         let limparLixoAtivo = false;
+        let tiposTecnologiaCarregados = false;
+        let tecnologiasSelecionadas = new Set(); // vazio = sem filtro (todas)
+
+        // Escapa qualquer valor antes de ir para o HTML.
+        // Os dados vêm de reconhecimento passivo (DNS, JS de terceiros, etc.),
+        // ou seja, um alvo malicioso pode registrar um subdomínio contendo
+        // "<script>" e, sem isso, ele executaria dentro do dashboard do analista.
         function escapeHTML(valor) {
             const div = document.createElement('div');
             div.textContent = valor ?? '';
@@ -168,6 +187,7 @@
 
             const painelFiltros = document.getElementById('vetorFiltros');
             const painelInteligente = document.getElementById('filtrosInteligentes');
+            const painelTech = document.getElementById('techFiltros');
             if (tabela === 'vetores') {
                 painelFiltros.classList.add('ativo');
                 painelInteligente.classList.add('ativo');
@@ -176,6 +196,58 @@
                 painelFiltros.classList.remove('ativo');
                 painelInteligente.classList.remove('ativo');
             }
+            if (tabela === 'hosts') {
+                painelTech.classList.add('ativo');
+                if (!tiposTecnologiaCarregados) carregarTiposTecnologia();
+            } else {
+                painelTech.classList.remove('ativo');
+            }
+            carregarDados();
+        }
+
+        // Busca as tecnologias distintas já detectadas (React, PHP, Envoy...)
+        // e monta um botão-tag pra cada uma, igual o padrão dos filtros
+        // inteligentes de vetores.
+        async function carregarTiposTecnologia() {
+            try {
+                const res = await fetch('/api/tecnologias/tipos');
+                const techs = await res.json();
+                tiposTecnologiaCarregados = true;
+
+                const painel = document.getElementById('techFiltros');
+                if (!techs || techs.length === 0) {
+                    painel.innerHTML = '<span style="color:#888;font-size:12px;">Nenhuma tecnologia detectada ainda.</span>';
+                    return;
+                }
+
+                const botoes = techs.map(t => {
+                    const idSeguro = 'tech_' + t.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    return `<button class="fi-tag" id="${idSeguro}" onclick="toggleTecnologia('${escapeHTML(t)}', '${idSeguro}')">${escapeHTML(t)}</button>`;
+                }).join('');
+
+                painel.innerHTML = botoes + `<a onclick="limparTecnologias()">limpar</a>`;
+            } catch (e) {
+                document.getElementById('techFiltros').innerHTML = '<span style="color:var(--danger);font-size:12px;">Erro ao carregar tecnologias.</span>';
+            }
+        }
+
+        function toggleTecnologia(tech, idSeguro) {
+            const btn = document.getElementById(idSeguro);
+            if (tecnologiasSelecionadas.has(tech)) {
+                tecnologiasSelecionadas.delete(tech);
+                btn.classList.remove('ativo');
+            } else {
+                tecnologiasSelecionadas.add(tech);
+                btn.classList.add('ativo');
+            }
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function limparTecnologias() {
+            tecnologiasSelecionadas.clear();
+            document.querySelectorAll('#techFiltros .fi-tag').forEach(b => b.classList.remove('ativo'));
+            paginaAtual = 1;
             carregarDados();
         }
 
@@ -296,15 +368,14 @@
                 const res = await fetch('/api/resumo');
                 const r = await res.json();
                 const cards = document.getElementById('resumoCards');
-                const btns = document.querySelectorAll('.tabs button');
 
                 const dados = [
                     { label: 'Subdomínios', valor: r.subdominios ?? 0, tabela: 'subdominios', idx: 0 },
-                    { label: 'Resolvidos', valor: r.resolvidos ?? 0, tabela: 'resolvidos', idx: 1 },
-                    { label: 'Status 200', valor: r.status_ok ?? 0, tabela: 'status', idx: 2 },
-                    { label: 'Tecnologias', valor: r.tecnologias ?? 0, tabela: 'tecnologias', idx: 3 },
-                    { label: 'Vetores', valor: r.vetores ?? 0, tabela: 'vetores', idx: 4 },
-                    { label: 'Cloud Recon', valor: r.cloud ?? 0, tabela: 'cloud', idx: 5 },
+                    { label: 'Hosts', valor: r.hosts ?? 0, tabela: 'hosts', idx: 1 },
+                    { label: 'Status 200', valor: r.status_ok ?? 0, tabela: 'hosts', idx: 1 },
+                    { label: 'Vetores', valor: r.vetores ?? 0, tabela: 'vetores', idx: 2 },
+                    { label: 'Cloud (risco)', valor: r.cloud_risco ?? 0, tabela: 'cloud', idx: 3 },
+                    { label: 'Atrás de CDN', valor: r.cdn_atras_cdn ?? 0, tabela: 'cdn', idx: 4 },
                 ];
 
                 cards.innerHTML = dados.map(d =>
@@ -336,6 +407,9 @@
                 if (limparLixoAtivo) {
                     url += `&limpar_lixo=1`;
                 }
+            }
+            if (tabelaAtual === 'hosts' && tecnologiasSelecionadas.size > 0) {
+                url += `&tecnologias=${encodeURIComponent([...tecnologiasSelecionadas].join(','))}`;
             }
 
             let resp;
@@ -383,26 +457,20 @@
                     const host = escapeHTML(d.Host);
                     linhas.push(`<tr><td>${d.ID}</td><td><a href="http://${host}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${host}</a></td></tr>`);
                 }
-            } else if (tabelaAtual === 'resolvidos') {
-                head.innerHTML = '<tr><th>ID</th><th>Host (resolveu DNS)</th></tr>';
+            } else if (tabelaAtual === 'hosts') {
+                head.innerHTML = '<tr><th>Host</th><th>Status</th><th>Tecnologias</th></tr>';
                 for (const d of dados) {
                     const host = escapeHTML(d.Host);
-                    linhas.push(`<tr><td>${d.ID}</td><td><a href="http://${host}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${host}</a></td></tr>`);
-                }
-            } else if (tabelaAtual === 'status') {
-                head.innerHTML = '<tr><th>Subdomínio</th><th>Código HTTP</th></tr>';
-                for (const d of dados) {
-                    const codigo = escapeHTML(d.StatusCode);
-                    const color = d.StatusCode?.startsWith('2') ? '#00ff88' : d.StatusCode?.startsWith('3') ? '#ffd700' : '#ff4444';
-                    linhas.push(`<tr><td>${escapeHTML(d.Subdominio)}</td><td><strong style="color:${color}">${codigo}</strong></td></tr>`);
-                }
-            } else if (tabelaAtual === 'tecnologias') {
-                head.innerHTML = '<tr><th>Subdomínio</th><th>Stack Detectada</th></tr>';
-                for (const d of dados) {
+                    const codigo = d.StatusCode || '';
+                    const cor = codigo.startsWith('2') ? '#00ff88' : codigo.startsWith('3') ? '#ffd700' : codigo ? '#ff4444' : '#666';
                     const techs = (d.Tecnologias || '').split(',')
                         .map(t => t.trim() ? `<span class="badge">${escapeHTML(t.trim())}</span>` : '')
                         .join(' ');
-                    linhas.push(`<tr><td>${escapeHTML(d.Subdominio)}</td><td>${techs || '<span class="badge">Nenhuma</span>'}</td></tr>`);
+                    linhas.push(`<tr>
+                        <td><a href="http://${host}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${host}</a></td>
+                        <td><strong style="color:${cor}">${escapeHTML(codigo) || '—'}</strong></td>
+                        <td>${techs || '<span class="badge">Nenhuma</span>'}</td>
+                    </tr>`);
                 }
             } else if (tabelaAtual === 'vetores') {
                 head.innerHTML = '<tr><th>Vetor</th><th>URL Alvo</th></tr>';
@@ -410,15 +478,33 @@
                     linhas.push(`<tr><td><strong style="color:#ff4444">[${escapeHTML((d.Tipo || '').toUpperCase())}]</strong></td><td>${escapeHTML(d.URL)}</td></tr>`);
                 }
             } else if (tabelaAtual === 'cloud') {
-                head.innerHTML = '<tr><th>Provedor</th><th>Bucket/Conta</th><th>Classificação</th><th>URL</th></tr>';
+                head.innerHTML = '<tr><th>Sev.</th><th>Provedor</th><th>Bucket/Conta</th><th>Permissões</th><th>URL</th></tr>';
                 for (const d of dados) {
-                    const publico = (d.Classificacao || '').startsWith('Público');
-                    const cor = publico ? 'var(--danger)' : 'var(--warn)';
+                    const sevClasse = d.Severidade === 'CRITICAL' ? 'badge-crit' : d.Severidade === 'HIGH' ? 'badge-high' : 'badge';
+                    const permissoes = [
+                        d.TakeoverPossivel ? '<span class="badge badge-crit">TAKEOVER</span>' : '',
+                        d.CanWrite ? '<span class="badge badge-crit">WRITE</span>' : '',
+                        d.CanDelete ? '<span class="badge badge-crit">DELETE</span>' : '',
+                        d.CanList ? '<span class="badge badge-high">LIST</span>' : '',
+                        (!d.CanList && !d.CanWrite && !d.TakeoverPossivel) ? `<span class="badge">${escapeHTML(d.Classificacao || '')}</span>` : '',
+                    ].filter(Boolean).join(' ');
                     linhas.push(`<tr>
+                        <td><span class="badge ${sevClasse}">${escapeHTML(d.Severidade || 'INFO')}</span></td>
                         <td>${escapeHTML(d.Provider)}</td>
                         <td><strong>${escapeHTML(d.Bucket)}</strong></td>
-                        <td><strong style="color:${cor}">${escapeHTML(d.Classificacao)}</strong> <span class="badge">HTTP ${d.StatusCode}</span></td>
-                        <td><a href="${escapeHTML(d.URL)}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${escapeHTML(d.URL)}</a></td>
+                        <td>${permissoes}</td>
+                        <td><a href="${escapeHTML(d.URL)}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${escapeHTML(d.URL)}</a> <span class="badge">fonte: ${escapeHTML(d.FonteExtracao || '?')}</span></td>
+                    </tr>`);
+                }
+            } else if (tabelaAtual === 'cdn') {
+                head.innerHTML = '<tr><th>Host</th><th>IP</th><th>Classificação</th></tr>';
+                for (const d of dados) {
+                    const classe = d.EhCDN ? 'badge-cdn' : 'badge-origem';
+                    const texto = d.EhCDN ? (d.Provedor || 'CDN') : 'IP de origem';
+                    linhas.push(`<tr>
+                        <td>${escapeHTML(d.Host)}</td>
+                        <td>${escapeHTML(d.IP)}</td>
+                        <td><span class="badge ${classe}">${escapeHTML(texto)}</span></td>
                     </tr>`);
                 }
             }

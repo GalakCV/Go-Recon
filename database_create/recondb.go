@@ -24,6 +24,19 @@ type Resolvido struct {
 	Host string `gorm:"uniqueIndex"`
 }
 
+// Host é a visão UNIFICADA de resolvidos + status code + tecnologias,
+// pensada pra virar uma única aba no dashboard em vez de três separadas
+// (Resolvidos / Status Code / Tecnologias). Populada a partir dos mesmos
+// arquivos que já alimentavam as tabelas antigas — Resolvido/Status/
+// Tecnologia continuam existindo por compatibilidade, mas o dashboard
+// passa a usar esta tabela.
+type Host struct {
+	ID          uint   `gorm:"primaryKey"`
+	Host        string `gorm:"uniqueIndex"`
+	StatusCode  string
+	Tecnologias string // separadas por vírgula, ex: "React, Nginx, PHP"
+}
+
 type Status struct {
 	ID         uint   `gorm:"primaryKey"`
 	Subdominio string `gorm:"index"`
@@ -38,19 +51,41 @@ type Tecnologia struct {
 
 type Vetor struct {
 	ID   uint   `gorm:"primaryKey"`
-	Tipo string `gorm:"index"` // ex: xss, sqli, lfi
+	Tipo string `gorm:"index"` // ex: xss, sqli, lfi, actuator, graphql, admin-panel
 	URL  string
 }
 
 // CloudAsset guarda cada bucket/conta de nuvem encontrado pelo Cloud Recon
-// (rv1-cloud), populado a partir de cloud-recon.json.
+// (rv1-cloud), populado a partir de cloud-recon.json. Os campos de
+// permissão (CanList/CanWrite/CanDelete/TakeoverPossivel) refletem o teste
+// ativo feito pelo módulo, no mesmo espírito do EnumRust: só reportar
+// buckets extraídos de referência real e confirmar o que de fato é
+// explorável, não só "existe".
 type CloudAsset struct {
-	ID            uint   `gorm:"primaryKey"`
-	Provider      string `gorm:"index"` // ex: AWS S3, Google Cloud Storage, Azure Blob
-	Bucket        string `gorm:"index"`
-	URL           string
-	StatusCode    int
-	Classificacao string // ex: "Público (listável)", "Privado (existe)"
+	ID               uint   `gorm:"primaryKey"`
+	Provider         string `gorm:"index"` // ex: AWS S3, Google Cloud Storage, Azure Blob
+	Bucket           string `gorm:"index"`
+	URL              string
+	StatusCode       int
+	Classificacao    string // ex: "Público (listável)", "Privado (existe)"
+	Severidade       string // INFO, LOW, MEDIUM, HIGH, CRITICAL
+	CanList          bool
+	CanWrite         bool
+	CanDelete        bool
+	TakeoverPossivel bool
+	FonteExtracao    string // urls.txt, javascripts/xyz.js...
+}
+
+// CdnInfo guarda a classificação CDN x IP de origem de cada host resolvido
+// (rv1-cdn), populada a partir de cdn-recon.json. Serve tanto de
+// visibilidade no dashboard quanto de base pro futuro port scanner (pular
+// IPs de CDN e focar nos hosts com IP de origem real).
+type CdnInfo struct {
+	ID       uint   `gorm:"primaryKey"`
+	Host     string `gorm:"uniqueIndex"`
+	IP       string `gorm:"index"`
+	Provedor string
+	EhCDN    bool `gorm:"index"`
 }
 
 // Estrutura auxiliar para ler o tecnologias.json
@@ -61,11 +96,25 @@ type TechJSON struct {
 
 // Estrutura auxiliar para ler o cloud-recon.json (gerado por rv1-cloud.CloudRecon)
 type CloudJSON struct {
-	Provider      string `json:"provider"`
-	Bucket        string `json:"bucket"`
-	URL           string `json:"url"`
-	StatusCode    int    `json:"status_code"`
-	Classificacao string `json:"classificacao"`
+	Provider         string `json:"provider"`
+	Bucket           string `json:"bucket"`
+	URL              string `json:"url"`
+	StatusCode       int    `json:"status_code"`
+	Classificacao    string `json:"classificacao"`
+	Severidade       string `json:"severidade"`
+	CanList          bool   `json:"can_list"`
+	CanWrite         bool   `json:"can_write"`
+	CanDelete        bool   `json:"can_delete"`
+	TakeoverPossivel bool   `json:"takeover_possivel"`
+	FonteExtracao    string `json:"fonte_extracao"`
+}
+
+// Estrutura auxiliar para ler o cdn-recon.json (gerado por rv1-cdn.FiltrarCDN)
+type CdnJSON struct {
+	Host     string `json:"host"`
+	IP       string `json:"ip"`
+	Provedor string `json:"provedor"`
+	EhCDN    bool   `json:"eh_cdn"`
 }
 
 // tamanhoLote define quantos registros entram em cada transação.
@@ -92,7 +141,7 @@ func PopularBanco(ctx context.Context, empresa string) {
 	}
 
 	// Cria as tabelas automaticamente
-	db.AutoMigrate(&Subdominio{}, &Resolvido{}, &Status{}, &Tecnologia{}, &Vetor{}, &CloudAsset{})
+	db.AutoMigrate(&Subdominio{}, &Resolvido{}, &Host{}, &Status{}, &Tecnologia{}, &Vetor{}, &CloudAsset{}, &CdnInfo{})
 
 	resultadosDir := filepath.Join(empresa, "resultados")
 
@@ -116,13 +165,24 @@ func PopularBanco(ctx context.Context, empresa string) {
 	fmt.Println("[*] Populando tabela: Tecnologias...")
 	inserirTecnologias(db, filepath.Join(resultadosDir, "tecnologias.json"))
 
-	// 5. Inserir Vetores de Ataque
+	// 4b. Inserir a visão unificada Host (resolvidos + status + tecnologias
+	// mesclados por nome de host), usada pela nova aba "Hosts" do dashboard.
+	fmt.Println("[*] Populando tabela: Hosts (visão unificada)...")
+	inserirHosts(db, resultadosDir)
+
+	// 5. Inserir Vetores de Ataque (inclui admin-panel.txt, actuator.txt e
+	// graphql.txt, gerados por rv1-admin e rv1-disclosure — mesmo formato
+	// dos outros arquivos de vetor, então entram automaticamente aqui)
 	fmt.Println("[*] Populando tabela: Vetores...")
 	inserirVetores(db, filepath.Join(resultadosDir, "vetores_ataque"))
 
 	// 6. Inserir Cloud Recon (buckets/contas encontrados por rv1-cloud.CloudRecon)
 	fmt.Println("[*] Populando tabela: CloudAssets...")
 	inserirCloud(db, filepath.Join(resultadosDir, "cloud-recon.json"))
+
+	// 7. Inserir classificação de CDN (rv1-cdn.FiltrarCDN)
+	fmt.Println("[*] Populando tabela: CdnInfo...")
+	inserirCdn(db, filepath.Join(resultadosDir, "cdn-recon.json"))
 
 	fmt.Printf("[+] Banco de dados '%s' populado com sucesso!\n", dbPath)
 }
@@ -232,6 +292,93 @@ func inserirTecnologias(db *gorm.DB, caminho string) {
 	inserirLote(db, lote)
 }
 
+// inserirHosts mescla resolvidos.txt + statuscode-httpx.txt + tecnologias.json
+// num único mapa por nome de host e popula a tabela Host — a visão
+// unificada que substitui as três abas separadas no dashboard.
+func inserirHosts(db *gorm.DB, resultadosDir string) {
+	hosts := make(map[string]*Host)
+
+	// Base: todo host resolvido entra na lista, mesmo sem status/tech ainda.
+	if arquivo, err := os.Open(filepath.Join(resultadosDir, "resolvidos.txt")); err == nil {
+		scanner := bufio.NewScanner(arquivo)
+		for scanner.Scan() {
+			h := strings.TrimSpace(scanner.Text())
+			if h != "" {
+				hosts[h] = &Host{Host: h}
+			}
+		}
+		arquivo.Close()
+	}
+
+	// Status code.
+	if arquivo, err := os.Open(filepath.Join(resultadosDir, "statuscode-httpx.txt")); err == nil {
+		scanner := bufio.NewScanner(arquivo)
+		for scanner.Scan() {
+			linha := strings.TrimSpace(scanner.Text())
+			partes := strings.Split(linha, " [")
+			if len(partes) != 2 {
+				continue
+			}
+			sub := strings.TrimSpace(partes[0])
+			codigo := strings.TrimRight(partes[1], "]")
+			if h, ok := hosts[sub]; ok {
+				h.StatusCode = codigo
+			} else {
+				hosts[sub] = &Host{Host: sub, StatusCode: codigo}
+			}
+		}
+		arquivo.Close()
+	}
+
+	// Tecnologias.
+	if conteudo, err := os.ReadFile(filepath.Join(resultadosDir, "tecnologias.json")); err == nil {
+		var techs []TechJSON
+		if json.Unmarshal(conteudo, &techs) == nil {
+			for _, t := range techs {
+				techStr := strings.Join(t.Tecnologias, ", ")
+				if h, ok := hosts[t.URL]; ok {
+					h.Tecnologias = techStr
+				} else {
+					hosts[t.URL] = &Host{Host: t.URL, Tecnologias: techStr}
+				}
+			}
+		}
+	}
+
+	lote := make([]interface{}, 0, tamanhoLote)
+	for _, h := range hosts {
+		lote = append(lote, h)
+		if len(lote) >= tamanhoLote {
+			inserirLote(db, lote)
+			lote = lote[:0]
+		}
+	}
+	inserirLote(db, lote)
+}
+
+// inserirCdn lê o cdn-recon.json (gerado por rv1-cdn.FiltrarCDN) e popula
+// a tabela CdnInfo. Sem o arquivo (etapa nunca rodou), não faz nada.
+func inserirCdn(db *gorm.DB, caminho string) {
+	conteudo, err := os.ReadFile(caminho)
+	if err != nil {
+		return
+	}
+	var achados []CdnJSON
+	if err := json.Unmarshal(conteudo, &achados); err != nil {
+		fmt.Printf("[-] Erro ao ler JSON de CDN: %v\n", err)
+		return
+	}
+	lote := make([]interface{}, 0, tamanhoLote)
+	for _, a := range achados {
+		lote = append(lote, &CdnInfo{Host: a.Host, IP: a.IP, Provedor: a.Provedor, EhCDN: a.EhCDN})
+		if len(lote) >= tamanhoLote {
+			inserirLote(db, lote)
+			lote = lote[:0]
+		}
+	}
+	inserirLote(db, lote)
+}
+
 // inserirCloud lê o cloud-recon.json (gerado por rv1-cloud.CloudRecon) e
 // popula a tabela CloudAsset. Se o arquivo não existir (Cloud Recon nunca
 // rodou), simplesmente não faz nada — mesmo comportamento das outras etapas.
@@ -250,11 +397,17 @@ func inserirCloud(db *gorm.DB, caminho string) {
 	lote := make([]interface{}, 0, tamanhoLote)
 	for _, a := range achados {
 		lote = append(lote, &CloudAsset{
-			Provider:      a.Provider,
-			Bucket:        a.Bucket,
-			URL:           a.URL,
-			StatusCode:    a.StatusCode,
-			Classificacao: a.Classificacao,
+			Provider:         a.Provider,
+			Bucket:           a.Bucket,
+			URL:              a.URL,
+			StatusCode:       a.StatusCode,
+			Classificacao:    a.Classificacao,
+			Severidade:       a.Severidade,
+			CanList:          a.CanList,
+			CanWrite:         a.CanWrite,
+			CanDelete:        a.CanDelete,
+			TakeoverPossivel: a.TakeoverPossivel,
+			FonteExtracao:    a.FonteExtracao,
 		})
 		if len(lote) >= tamanhoLote {
 			inserirLote(db, lote)

@@ -16,7 +16,10 @@ import (
 	//rv1tecnologia "go-recon/rv1-tecnologia"
 	//go-recon/rv1-validacao"
 	"go-recon/database_create"
-	rv1cloud "go-recon/rv1-cloud"
+	//rv1cloud "go-recon/rv1-cloud"
+	//rv1admin "go-recon/rv1-admin"
+	//rv1disclosure "go-recon/rv1-disclosure"
+	//rv1cdn "go-recon/rv1-cdn"
 	"go-recon/recon-dash"
 )
 
@@ -98,19 +101,35 @@ func main() {
 		},
 		{
 			nome: "Purificação e Separação de Vetores (Uro + GF)",
-			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, nomeEmpresa) }, 
+			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Admin Panel Finder (fingerprint via baseline 404)",
+			fn:   func(ctx context.Context) { rv1admin.EncontrarAdminPanels(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Disclosure Scanner (Spring Boot Actuator + GraphQL)",
+			fn:   func(ctx context.Context) { rv1disclosure.EscanearDisclosure(ctx, nomeEmpresa) },
+		},
+		{
+			// testarEscrita=false por padrão: só LIST é testado (passivo).
+			// Mude para "true" só em programas de bug bounty que autorizam
+			// teste ativo de escrita/exclusão em storage do alvo.
+			nome: "Cloud Recon (extração + teste de permissão real)",
+			fn:   func(ctx context.Context) { rv1cloud.CloudRecon(ctx, nomeEmpresa, false) },
+		},
+		{
+			nome: "Classificação de CDN por IP",
+			fn:   func(ctx context.Context) { rv1cdn.FiltrarCDN(ctx, nomeEmpresa) },
 		},
 		*/
-
 		{
-			nome: "Cloud Recon (S3 / GCS / Azure Blob)",
-			fn:   func(ctx context.Context) { rv1cloud.CloudRecon(ctx, nomeEmpresa) },
-		},
-
-		{
+			// Exportação pro SQLite vem por ÚLTIMO de propósito: precisa
+			// rodar DEPOIS de todas as etapas que geram arquivo (admin,
+			// disclosure, cloud, cdn), senão o banco fica sem esses achados
+			// até a próxima execução.
 			nome: "Exportação para Banco de Dados SQLite",
 			fn:   func(ctx context.Context) { rv1db.PopularBanco(ctx, nomeEmpresa) },
-
 		},
 	
 	}
