@@ -7,21 +7,31 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
-	//"go-recon/rv1-js"
-	//"go-recon/rv1-recongeral"
-	//"go-recon/rv1-subdominios"
-	//"go-recon/rv1-js-analise"
-	//"go-recon/rv1-crawling"
-	//rv1tecnologia "go-recon/rv1-tecnologia"
-	//go-recon/rv1-validacao"
-	"go-recon/database_create"
-	//rv1cloud "go-recon/rv1-cloud"
-	//rv1admin "go-recon/rv1-admin"
-	//rv1disclosure "go-recon/rv1-disclosure"
-	//rv1cdn "go-recon/rv1-cdn"
-	"go-recon/recon-dash"
+	//rv1subdominios "go-recon/rv1-subdominios"
+	//rv1recongeral "go-recon/rv1-recongeral"
+	rv1crawling "go-recon/rv1-crawling"
+	rv1js "go-recon/rv1-js"
+	rv1jsanalise "go-recon/rv1-js-analise"
+	rv1tecnologia "go-recon/rv1-tecnologia"
+	rv1validacao "go-recon/rv1-validacao"
+	rv1admin "go-recon/rv1-admin"
+	rv1disclosure "go-recon/rv1-disclosure"
+	rv1cloud "go-recon/rv1-cloud"
+	rv1cdn "go-recon/rv1-cdn"
+	rv1db "go-recon/database_create"
+	recondash "go-recon/recon-dash"
 )
+
+// etapaTimeoutPadrao é um teto de segurança aplicado a CADA etapa do
+// pipeline. Antes, o contexto de cada etapa só era cancelado via CTRL + C
+// (context.WithCancel sem prazo), então qualquer ferramenta externa que
+// travasse (ex: katana numa lista grande de hosts, sem flags de limite)
+// prendia o pipeline indefinidamente. Agora, se o usuário esquecer de
+// apertar CTRL + C, a etapa é cancelada sozinha depois desse tempo e o
+// pipeline segue para a próxima.
+const etapaTimeoutPadrao = 30 * time.Minute
 
 func CriarAmbiente(empresa string) {
 	dirName := filepath.Clean(empresa)
@@ -45,63 +55,72 @@ func main() {
 	CriarAmbiente(nomeEmpresa)
 	fmt.Printf("[*] Lendo alvos do arquivo: %s\n", arquivoAlvos)
 	fmt.Println("[*] Dica: Pressione CTRL + C para pular para a próxima etapa se necessário.")
+
 	etapas := []struct {
 		nome string
 		fn   func(ctx context.Context)
 	}{
+
 		/*
-			{
-				nome: "Subdomínios (Subfinder)",
-				fn:   func(ctx context.Context) { rv1subdominios.Subdominios(ctx, arquivoAlvos, nomeEmpresa) },
-			},
-			{
-				nome: "Resolução de Subdomínios (Dnsx)",
-				fn:   func(ctx context.Context) { rv1subdominios.ResolucaoSubdominios(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Recon Geral Status (HttpxStatus)",
-				fn:   func(ctx context.Context) { rv1recongeral.HttpxStatus(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Coleta de JavaScript (Katana)",
-				fn:   func(ctx context.Context) { rv1js.ColetarJS(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Validação de JavaScript",
-				fn:   func(ctx context.Context) { rv1js.ValidarJS(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Extração de Endpoint",
-				fn:   func(ctx context.Context) { rv1jsanalise.ExtrairEndpoints(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Download de JavaScript",
-				fn:   func(ctx context.Context) { rv1jsanalise.BaixarJS(ctx, nomeEmpresa) },
-			},
-			{
-				nome: "Analise de secrets com Trufflehog",
-				fn:   func(ctx context.Context) { rv1jsanalise.AnalisarSegredos(ctx, nomeEmpresa) },
-			},
-			{
-				nome:"Realizando crawling com Gau",
-				fn:   func(ctx context.Context) {rv1crawling.Gau(ctx, nomeEmpresa)},
-			},
-			{
-				nome:"Realizando crawling com Waymore",
-				fn:   func(ctx context.Context) {rv1crawling.Waymore(ctx, arquivoAlvos, nomeEmpresa)},
-			},
-			{
-				nome:"Realizando crawling com Gau",
-				fn:   func(ctx context.Context) {rv1crawling.XnLinkFinder(ctx,arquivoAlvos, nomeEmpresa)},
-			},
-		
+		{
+			nome: "Subdomínios (Subfinder)",
+			fn:   func(ctx context.Context) { rv1subdominios.Subdominios(ctx, arquivoAlvos, nomeEmpresa) },
+		},
+		{
+			nome: "Resolução de Subdomínios (Dnsx)",
+			fn:   func(ctx context.Context) { rv1subdominios.ResolucaoSubdominios(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Recon Geral Status (HttpxStatus)",
+			fn:   func(ctx context.Context) { rv1recongeral.HttpxStatus(ctx, nomeEmpresa) },
+		},
+		// Crawling histórico (gau/waymore/xnLinkFinder) roda ANTES da coleta
+		// de JS para que o ColetarJS consiga enxergar essas fontes salvas.
+		{
+			nome: "Crawling histórico (Gau)",
+			fn:   func(ctx context.Context) { rv1crawling.Gau(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Crawling histórico (Waymore)",
+			fn:   func(ctx context.Context) { rv1crawling.Waymore(ctx, arquivoAlvos, nomeEmpresa) },
+		},
+		*/
+		{
+			nome: "Crawling histórico (XnLinkFinder)",
+			fn:   func(ctx context.Context) { rv1crawling.XnLinkFinder(ctx, arquivoAlvos, nomeEmpresa) },
+		},
+	    {
+			nome: "Coleta de JavaScript (katana + histórico)",
+			fn:   func(ctx context.Context) { rv1js.ColetarJS(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Priorização de JavaScript (tiers HIGH/MEDIUM/LOW/SKIP)",
+			fn:   func(ctx context.Context) { rv1js.PriorizarJS(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Download seletivo de JavaScript",
+			fn:   func(ctx context.Context) { rv1jsanalise.BaixarJS(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Extração de Endpoints (jsluice + jshunter + linkfinder)",
+			fn:   func(ctx context.Context) { rv1jsanalise.ExtrairEndpoints(ctx, arquivoAlvos, nomeEmpresa) },
+		},
+		{
+			nome: "Validação de Endpoints (httpx direcionado)",
+			fn:   func(ctx context.Context) { rv1jsanalise.ValidarEndpoints(ctx, nomeEmpresa) },
+		},
+		{
+			nome: "Análise de Segredos (trufflehog + gitleaks)",
+			fn:   func(ctx context.Context) { rv1jsanalise.AnalisarSegredos(ctx, nomeEmpresa) },
+		},
+		// ------------------------------------------------------------------
 		{
 			nome: "Descoberta de Tecnologias (Webanalyze)",
 			fn:   func(ctx context.Context) { rv1tecnologia.WebanalyzeTech(ctx, nomeEmpresa) },
 		},
 		{
-			nome: "Purificação e Separação de Vetores (Uro + GF)",
-			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, nomeEmpresa) },
+			nome: "Vetores de Ataque (triagem + validação + confirmação)",
+			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, arquivoAlvos, nomeEmpresa) },
 		},
 		{
 			nome: "Admin Panel Finder (fingerprint via baseline 404)",
@@ -113,8 +132,6 @@ func main() {
 		},
 		{
 			// testarEscrita=false por padrão: só LIST é testado (passivo).
-			// Mude para "true" só em programas de bug bounty que autorizam
-			// teste ativo de escrita/exclusão em storage do alvo.
 			nome: "Cloud Recon (extração + teste de permissão real)",
 			fn:   func(ctx context.Context) { rv1cloud.CloudRecon(ctx, nomeEmpresa, false) },
 		},
@@ -122,20 +139,18 @@ func main() {
 			nome: "Classificação de CDN por IP",
 			fn:   func(ctx context.Context) { rv1cdn.FiltrarCDN(ctx, nomeEmpresa) },
 		},
-		*/
 		{
 			// Exportação pro SQLite vem por ÚLTIMO de propósito: precisa
 			// rodar DEPOIS de todas as etapas que geram arquivo (admin,
-			// disclosure, cloud, cdn), senão o banco fica sem esses achados
-			// até a próxima execução.
+			// disclosure, cloud, cdn, js), senão o banco fica sem esses
+			// achados até a próxima execução.
 			nome: "Exportação para Banco de Dados SQLite",
 			fn:   func(ctx context.Context) { rv1db.PopularBanco(ctx, nomeEmpresa) },
 		},
-	
 	}
 
 	for _, etapa := range etapas {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), etapaTimeoutPadrao)
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGINT)
 		go func() {
@@ -146,6 +161,9 @@ func main() {
 		fmt.Printf("[*] Etapa: %s\n", etapa.nome)
 		fmt.Printf("========================================\n")
 		etapa.fn(ctx)
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Printf("[!] Etapa \"%s\" excedeu o tempo máximo (%s) e foi encerrada automaticamente.\n", etapa.nome, etapaTimeoutPadrao)
+		}
 		signal.Stop(sigChan)
 		cancel()
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	rv1db "go-recon/database_create" // Alias adicionado para bater com as structs
+
 	//"net"
 	"net/http"
 	"path/filepath"
@@ -171,6 +172,15 @@ func (a *App) apiHandler(w http.ResponseWriter, r *http.Request) {
 	case "vetores":
 		var dados []rv1db.Vetor
 		q := a.DB.Model(&rv1db.Vetor{}).Where("url LIKE ? OR tipo LIKE ?", queryBusca, queryBusca)
+		// Filtro por status de confiança: ?status=CONFIRMADO,SUSPEITO
+		// Vazio ou ausente = sem filtro (mantém todos os status).
+		if statusParam := r.URL.Query().Get("status"); statusParam != "" {
+			statusVals := strings.Split(statusParam, ",")
+			for i := range statusVals {
+				statusVals[i] = strings.TrimSpace(statusVals[i])
+			}
+			q = q.Where("status IN ?", statusVals)
+		}
 		// Filtro por checkboxes de vulnerabilidade: ?tipos=ssrf,xss,sqli
 		// Vazio ou ausente = sem filtro (mantém todos os tipos).
 		if tiposParam := r.URL.Query().Get("tipos"); tiposParam != "" {
@@ -217,6 +227,21 @@ func (a *App) apiHandler(w http.ResponseWriter, r *http.Request) {
 			"provider LIKE ? OR bucket LIKE ? OR url LIKE ? OR classificacao LIKE ?",
 			queryBusca, queryBusca, queryBusca, queryBusca,
 		)
+		q.Count(&total)
+		q.Order("id DESC").Limit(limit).Offset(offset).Find(&dados)
+		resultados = dados
+	case "endpointjs":
+		var dados []rv1db.EndpointJS
+		q := a.DB.Model(&rv1db.EndpointJS{}).Where(
+			"endpoint LIKE ? OR source LIKE ? OR tool LIKE ? OR tier LIKE ?",
+			queryBusca, queryBusca, queryBusca, queryBusca,
+		)
+		q.Count(&total)
+		q.Order("id DESC").Limit(limit).Offset(offset).Find(&dados)
+		resultados = dados
+	case "segredos":
+		var dados []rv1db.Segredo
+		q := a.DB.Model(&rv1db.Segredo{}).Where("descricao LIKE ?", queryBusca)
 		q.Count(&total)
 		q.Order("id DESC").Limit(limit).Offset(offset).Find(&dados)
 		resultados = dados
@@ -287,7 +312,12 @@ type resumoDashboard struct {
 	CloudRisco  int64            `json:"cloud_risco"` // achados HIGH/CRITICAL
 	CdnTotal    int64            `json:"cdn_total"`
 	CdnAtrasCDN int64            `json:"cdn_atras_cdn"`
+	EndpointsJS int64            `json:"endpoints_js"`
+	Segredos    int64            `json:"segredos"`
 	PorVetor    map[string]int64 `json:"por_vetor"`
+	Confirmados int64            `json:"confirmados"`
+	Suspeitos   int64            `json:"suspeitos"`
+	Candidatos  int64            `json:"candidatos"`
 }
 
 // resumoHandler alimenta os cards de overview do dashboard (/api/resumo).
@@ -303,6 +333,11 @@ func (a *App) resumoHandler(w http.ResponseWriter, r *http.Request) {
 	a.DB.Model(&rv1db.CloudAsset{}).Where("severidade IN ?", []string{"HIGH", "CRITICAL"}).Count(&resumo.CloudRisco)
 	a.DB.Model(&rv1db.CdnInfo{}).Count(&resumo.CdnTotal)
 	a.DB.Model(&rv1db.CdnInfo{}).Where("eh_cdn = ?", true).Count(&resumo.CdnAtrasCDN)
+	a.DB.Model(&rv1db.EndpointJS{}).Count(&resumo.EndpointsJS)
+	a.DB.Model(&rv1db.Segredo{}).Count(&resumo.Segredos)
+	a.DB.Model(&rv1db.Vetor{}).Where("status = ?", "CONFIRMADO").Count(&resumo.Confirmados)
+	a.DB.Model(&rv1db.Vetor{}).Where("status = ?", "SUSPEITO").Count(&resumo.Suspeitos)
+	a.DB.Model(&rv1db.Vetor{}).Where("status = ?", "CANDIDATO").Count(&resumo.Candidatos)
 
 	type contagem struct {
 		Tipo  string

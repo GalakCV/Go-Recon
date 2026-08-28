@@ -93,6 +93,8 @@
             <button onclick="mudarTabela('vetores', this)">Vetores de Ataque</button>
             <button onclick="mudarTabela('cloud', this)">Cloud Recon</button>
             <button onclick="mudarTabela('cdn', this)">CDN / IPs</button>
+            <button onclick="mudarTabela('endpointjs', this)">JS / Endpoints</button>
+            <button onclick="mudarTabela('segredos', this)">Segredos</button>
         </div>
 
         <input type="text" id="searchBox" placeholder="Filtre por 'api', 'dev', '200' ou 'xss'..." oninput="onBusca()" onkeyup="seEnter(event)">
@@ -102,6 +104,15 @@
 
         <!-- Checkboxes só aparecem na aba "Vetores de Ataque", populados dinamicamente via /api/vetores/tipos -->
         <div id="vetorFiltros"></div>
+
+        <!-- Filtro por status de confiança (só na aba "Vetores de Ataque") -->
+        <div id="statusFiltros" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center;">
+            <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Status</span>
+            <button class="fi-tag ativo" id="st_conf" onclick="toggleStatus('CONFIRMADO', this)">CONFIRMADO</button>
+            <button class="fi-tag ativo" id="st_susp" onclick="toggleStatus('SUSPEITO', this)">SUSPEITO</button>
+            <button class="fi-tag" id="st_cand" onclick="toggleStatus('CANDIDATO', this)">CANDIDATO</button>
+            <a onclick="limparStatus()" style="color:var(--accent);cursor:pointer;font-size:12px;">limpar</a>
+        </div>
 
         <!-- Filtros inteligentes (tags por padrão de URL) — só na aba "Vetores de Ataque" -->
         <div id="filtrosInteligentes">
@@ -167,6 +178,7 @@
         let limparLixoAtivo = false;
         let tiposTecnologiaCarregados = false;
         let tecnologiasSelecionadas = new Set(); // vazio = sem filtro (todas)
+        let statusVetorSelecionados = new Set(['CONFIRMADO', 'SUSPEITO']); // painel: por padrão só o que merece teste manual
 
         // Escapa qualquer valor antes de ir para o HTML.
         // Os dados vêm de reconhecimento passivo (DNS, JS de terceiros, etc.),
@@ -188,13 +200,16 @@
             const painelFiltros = document.getElementById('vetorFiltros');
             const painelInteligente = document.getElementById('filtrosInteligentes');
             const painelTech = document.getElementById('techFiltros');
+            const painelStatus = document.getElementById('statusFiltros');
             if (tabela === 'vetores') {
                 painelFiltros.classList.add('ativo');
                 painelInteligente.classList.add('ativo');
+                painelStatus.style.display = 'flex';
                 if (!tiposVetorCarregados) carregarTiposVetor();
             } else {
                 painelFiltros.classList.remove('ativo');
                 painelInteligente.classList.remove('ativo');
+                painelStatus.style.display = 'none';
             }
             if (tabela === 'hosts') {
                 painelTech.classList.add('ativo');
@@ -334,6 +349,25 @@
             carregarDados();
         }
 
+        function toggleStatus(st, btnElement) {
+            if (statusVetorSelecionados.has(st)) {
+                statusVetorSelecionados.delete(st);
+                btnElement.classList.remove('ativo');
+            } else {
+                statusVetorSelecionados.add(st);
+                btnElement.classList.add('ativo');
+            }
+            paginaAtual = 1;
+            carregarDados();
+        }
+
+        function limparStatus() {
+            statusVetorSelecionados.clear();
+            document.querySelectorAll('#statusFiltros .fi-tag').forEach(b => b.classList.remove('ativo'));
+            paginaAtual = 1;
+            carregarDados();
+        }
+
         function seEnter(e) {
             if (e.key === 'Enter') {
                 clearTimeout(debounceTimer);
@@ -376,6 +410,8 @@
                     { label: 'Vetores', valor: r.vetores ?? 0, tabela: 'vetores', idx: 2 },
                     { label: 'Cloud (risco)', valor: r.cloud_risco ?? 0, tabela: 'cloud', idx: 3 },
                     { label: 'Atrás de CDN', valor: r.cdn_atras_cdn ?? 0, tabela: 'cdn', idx: 4 },
+                    { label: 'Endpoints JS', valor: r.endpoints_js ?? 0, tabela: 'endpointjs', idx: 5 },
+                    { label: 'Segredos', valor: r.segredos ?? 0, tabela: 'segredos', idx: 6 },
                 ];
 
                 cards.innerHTML = dados.map(d =>
@@ -398,6 +434,9 @@
             const idRequisicao = ++requisicaoAtual;
             let url = `/api/dados?tabela=${tabelaAtual}&search=${encodeURIComponent(busca)}&page=${paginaAtual}&limit=${limit}`;
             if (tabelaAtual === 'vetores') {
+                if (statusVetorSelecionados.size > 0) {
+                    url += `&status=${encodeURIComponent([...statusVetorSelecionados].join(','))}`;
+                }
                 if (tiposVetorSelecionados.size > 0) {
                     url += `&tipos=${encodeURIComponent([...tiposVetorSelecionados].join(','))}`;
                 }
@@ -473,9 +512,16 @@
                     </tr>`);
                 }
             } else if (tabelaAtual === 'vetores') {
-                head.innerHTML = '<tr><th>Vetor</th><th>URL Alvo</th></tr>';
+                head.innerHTML = '<tr><th>Status</th><th>Vetor</th><th>URL Alvo</th><th>Evidência</th></tr>';
                 for (const d of dados) {
-                    linhas.push(`<tr><td><strong style="color:#ff4444">[${escapeHTML((d.Tipo || '').toUpperCase())}]</strong></td><td>${escapeHTML(d.URL)}</td></tr>`);
+                    const st = d.Status || 'CANDIDATO';
+                    const stClasse = st === 'CONFIRMADO' ? 'badge-crit' : st === 'SUSPEITO' ? 'badge-high' : 'badge';
+                    linhas.push(`<tr>
+                        <td><span class="badge ${stClasse}">${escapeHTML(st)}</span></td>
+                        <td><strong style="color:#ff4444">[${escapeHTML((d.Tipo || '').toUpperCase())}]</strong></td>
+                        <td>${escapeHTML(d.URL)}</td>
+                        <td style="color:#888">${escapeHTML(d.Evidencia || '—')}</td>
+                    </tr>`);
                 }
             } else if (tabelaAtual === 'cloud') {
                 head.innerHTML = '<tr><th>Sev.</th><th>Provedor</th><th>Bucket/Conta</th><th>Permissões</th><th>URL</th></tr>';
@@ -506,6 +552,22 @@
                         <td>${escapeHTML(d.IP)}</td>
                         <td><span class="badge ${classe}">${escapeHTML(texto)}</span></td>
                     </tr>`);
+                }
+            } else if (tabelaAtual === 'endpointjs') {
+                head.innerHTML = '<tr><th>Endpoint</th><th>Origem (JS)</th><th>Ferramenta</th><th>Tier</th></tr>';
+                for (const d of dados) {
+                    const tierClasse = d.Tier === 'HIGH' ? 'badge-crit' : d.Tier === 'MEDIUM' ? 'badge-high' : 'badge';
+                    linhas.push(`<tr>
+                        <td><a href="${escapeHTML(d.Endpoint)}" target="_blank" rel="noopener noreferrer" style="color:var(--text)">${escapeHTML(d.Endpoint)}</a></td>
+                        <td style="color:#888">${escapeHTML(d.Source || '—')}</td>
+                        <td><span class="badge">${escapeHTML(d.Tool || '—')}</span></td>
+                        <td><span class="badge ${tierClasse}">${escapeHTML(d.Tier || 'LOW')}</span></td>
+                    </tr>`);
+                }
+            } else if (tabelaAtual === 'segredos') {
+                head.innerHTML = '<tr><th>ID</th><th>Descrição / Achado</th></tr>';
+                for (const d of dados) {
+                    linhas.push(`<tr><td>${d.ID}</td><td style="color:#ffd700">${escapeHTML(d.Descricao)}</td></tr>`);
                 }
             }
 

@@ -109,12 +109,20 @@ func XnLinkFinder(ctx context.Context, arquivoAlvos, empresa string) {
 		fmt.Printf("[-] Arquivo não encontrado: %s\n", inputStatus200)
 		return
 	}
+	if _, err := os.Stat(arquivoAlvos); err != nil {
+		fmt.Printf("[-] Arquivo de alvos não encontrado: %s\n", arquivoAlvos)
+		return
+	}
 
-	// CORREÇÃO: Removido o -sp (não necessário aqui) e alterado o -sf para usar
-	// diretamente a variável 'empresa' (ex: "google") como string de filtro.
+	// CORREÇÃO: o -sf (--scope-filter) do xnLinkFinder precisa ser um domínio
+	// único ou um ARQUIVO com domínios (sem schema) — não o nome da pasta do
+	// projeto (ex: "us-gov", que não é um domínio válido e por isso o
+	// xnLinkFinder rejeitava a flag, não gravava xnlinkfinder.txt, e o merge
+	// falhava depois com "no such file or directory"). Usamos o próprio
+	// arquivo de alvos, que já é uma lista de domínios válida.
 	cmd := exec.CommandContext(ctx, "xnLinkFinder",
 		"-i", inputStatus200,
-		"-sf", empresa,
+		"-sf", arquivoAlvos,
 		"-o", outputXn,
 	)
 	cmd.Stdout = os.Stdout

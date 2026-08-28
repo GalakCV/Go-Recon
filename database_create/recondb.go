@@ -50,9 +50,11 @@ type Tecnologia struct {
 }
 
 type Vetor struct {
-	ID   uint   `gorm:"primaryKey"`
-	Tipo string `gorm:"index"` // ex: xss, sqli, lfi, actuator, graphql, admin-panel
-	URL  string
+	ID        uint   `gorm:"primaryKey"`
+	Tipo      string `gorm:"index"` // ex: xss, sqli, lfi, actuator, graphql, admin-panel
+	URL       string
+	Status    string `gorm:"index"` // CANDIDATO | SUSPEITO | CONFIRMADO
+	Evidencia string
 }
 
 // CloudAsset guarda cada bucket/conta de nuvem encontrado pelo Cloud Recon
@@ -86,6 +88,32 @@ type CdnInfo struct {
 	IP       string `gorm:"index"`
 	Provedor string
 	EhCDN    bool `gorm:"index"`
+}
+
+// EndpointJS representa um endpoint extraído dos arquivos JavaScript
+// (rv1-js-analise), populado a partir de js/sources.jsonl. Mantém a
+// proveniência (JS de origem + ferramenta) para auditoria/reprodução.
+type EndpointJS struct {
+	ID       uint   `gorm:"primaryKey"`
+	Endpoint string `gorm:"uniqueIndex"`
+	Source   string `gorm:"index"`
+	Tool     string
+	Tier     string
+}
+
+// Segredo representa um secret encontrado nos JS baixados (trufflehog/
+// gitleaks), populado a partir de js/secrets.txt.
+type Segredo struct {
+	ID        uint   `gorm:"primaryKey"`
+	Descricao string
+}
+
+// EndpointJSJSON é a estrutura de uma linha do js/sources.jsonl.
+type EndpointJSJSON struct {
+	Endpoint string `json:"endpoint"`
+	Source   string `json:"source"`
+	Tool     string `json:"tool"`
+	Tier     string `json:"tier"`
 }
 
 // Estrutura auxiliar para ler o tecnologias.json
@@ -141,7 +169,7 @@ func PopularBanco(ctx context.Context, empresa string) {
 	}
 
 	// Cria as tabelas automaticamente
-	db.AutoMigrate(&Subdominio{}, &Resolvido{}, &Host{}, &Status{}, &Tecnologia{}, &Vetor{}, &CloudAsset{}, &CdnInfo{})
+	db.AutoMigrate(&Subdominio{}, &Resolvido{}, &Host{}, &Status{}, &Tecnologia{}, &Vetor{}, &CloudAsset{}, &CdnInfo{}, &EndpointJS{}, &Segredo{})
 
 	resultadosDir := filepath.Join(empresa, "resultados")
 
@@ -183,6 +211,14 @@ func PopularBanco(ctx context.Context, empresa string) {
 	// 7. Inserir classificação de CDN (rv1-cdn.FiltrarCDN)
 	fmt.Println("[*] Populando tabela: CdnInfo...")
 	inserirCdn(db, filepath.Join(resultadosDir, "cdn-recon.json"))
+
+	// 8. Inserir endpoints extraídos do JavaScript (rv1-js-analise)
+	fmt.Println("[*] Populando tabela: EndpointsJS...")
+	inserirEndpointsJS(db, filepath.Join(resultadosDir, "js", "sources.jsonl"))
+
+	// 9. Inserir segredos encontrados nos JS (rv1-js-analise)
+	fmt.Println("[*] Populando tabela: Segredos...")
+	inserirSegredos(db, filepath.Join(resultadosDir, "js", "secrets.txt"))
 
 	fmt.Printf("[+] Banco de dados '%s' populado com sucesso!\n", dbPath)
 }
@@ -417,20 +453,148 @@ func inserirCloud(db *gorm.DB, caminho string) {
 	inserirLote(db, lote)
 }
 
+// fileExiste é um helper simples para checar a existência de um arquivo.
+func fileExiste(caminho string) bool {
+	_, err := os.Stat(caminho)
+	return err == nil
+}
+
+// inserirVetores lê o arquivo vetores.jsonl (gerado pelo novo pipeline de
+// vetores em rv1-validacao) e popula a tabela Vetor com status/evidência.
+// Mantém retrocompatibilidade com os arquivos *.txt do fluxo antigo (gf),
+// que nesse caso entram como status CANDIDATO.
 func inserirVetores(db *gorm.DB, pastaVetores string) {
+	jsonl := filepath.Join(pastaVetores, "vetores.jsonl")
+	if fileExiste(jsonl) {
+		inserirVetoresJSONL(db, jsonl)
+		// não lê os .txt antigos se o pipeline novo já gerou o JSONL
+		return
+	}
+
+	// fluxo antigo (fallback): *.txt -> status CANDIDATO
 	arquivos, err := os.ReadDir(pastaVetores)
 	if err != nil {
 		return
 	}
-
 	for _, req := range arquivos {
 		if !req.IsDir() && strings.HasSuffix(req.Name(), ".txt") {
 			tipoVetor := strings.TrimSuffix(req.Name(), ".txt")
 			caminhoArquivo := filepath.Join(pastaVetores, req.Name())
-
 			inserirTxtSimples(db, caminhoArquivo, func(linha string) interface{} {
-				return &Vetor{Tipo: tipoVetor, URL: linha}
+				return &Vetor{Tipo: tipoVetor, URL: linha, Status: "CANDIDATO"}
 			})
 		}
 	}
+}
+
+// inserirVetoresJSONL lê vetores.jsonl (uma linha JSON com tipo/url/status/
+// evidencia) e insere na tabela Vetor.
+func inserirVetoresJSONL(db *gorm.DB, caminho string) {
+	arquivo, err := os.Open(caminho)
+	if err != nil {
+		return
+	}
+	defer arquivo.Close()
+
+	lote := make([]interface{}, 0, tamanhoLote)
+	scanner := bufio.NewScanner(arquivo)
+	scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024)
+
+	for scanner.Scan() {
+		linha := strings.TrimSpace(scanner.Text())
+		if linha == "" {
+			continue
+		}
+		var v struct {
+			Tipo      string `json:"tipo"`
+			URL       string `json:"url"`
+			Status    string `json:"status"`
+			Evidencia string `json:"evidencia"`
+		}
+		if err := json.Unmarshal([]byte(linha), &v); err != nil || v.URL == "" {
+			continue
+		}
+		status := v.Status
+		if status == "" {
+			status = "CANDIDATO"
+		}
+		lote = append(lote, &Vetor{
+			Tipo:      v.Tipo,
+			URL:       v.URL,
+			Status:    status,
+			Evidencia: v.Evidencia,
+		})
+		if len(lote) >= tamanhoLote {
+			inserirLote(db, lote)
+			lote = lote[:0]
+		}
+	}
+	inserirLote(db, lote)
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("[-] Erro lendo vetores.jsonl: %v\n", err)
+	}
+}
+
+// inserirEndpointsJS lê o js/sources.jsonl (gerado por rv1-js-analise) e
+// popula a tabela EndpointJS. Cada linha é um JSON com endpoint/source/
+// tool/tier. Sem o arquivo, não faz nada.
+//
+// CORREÇÃO: a tabela nunca era limpa entre execuções, então rodar o
+// pipeline de novo (ex: depois de um filtro de escopo mais rígido)
+// simplesmente ACRESCENTAVA linhas nas já existentes — o lixo de uma
+// execução antiga continuava aparecendo no painel ao lado dos dados novos.
+// sources.jsonl já é o snapshot completo e atual, então a tabela é limpa
+// antes de reinserir.
+func inserirEndpointsJS(db *gorm.DB, caminho string) {
+	if err := db.Where("1 = 1").Delete(&EndpointJS{}).Error; err != nil {
+		fmt.Printf("[-] Erro limpando tabela EndpointsJS antes de repopular: %v\n", err)
+	}
+
+	arquivo, err := os.Open(caminho)
+	if err != nil {
+		return
+	}
+	defer arquivo.Close()
+
+	lote := make([]interface{}, 0, tamanhoLote)
+	scanner := bufio.NewScanner(arquivo)
+	scanner.Buffer(make([]byte, 1024*1024), 4*1024*1024)
+
+	for scanner.Scan() {
+		linha := strings.TrimSpace(scanner.Text())
+		if linha == "" {
+			continue
+		}
+		var e EndpointJSJSON
+		if err := json.Unmarshal([]byte(linha), &e); err != nil {
+			continue
+		}
+		if e.Endpoint == "" {
+			continue
+		}
+		lote = append(lote, &EndpointJS{
+			Endpoint: e.Endpoint,
+			Source:   e.Source,
+			Tool:     e.Tool,
+			Tier:     e.Tier,
+		})
+		if len(lote) >= tamanhoLote {
+			inserirLote(db, lote)
+			lote = lote[:0]
+		}
+	}
+	inserirLote(db, lote)
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("[-] Erro lendo sources.jsonl: %v\n", err)
+	}
+}
+
+// inserirSegredos lê o js/secrets.txt (gerado por rv1-js-analise) e popula
+// a tabela Segredo. Cada linha vira um registro.
+func inserirSegredos(db *gorm.DB, caminho string) {
+	inserirTxtSimples(db, caminho, func(linha string) interface{} {
+		return &Segredo{Descricao: linha}
+	})
 }

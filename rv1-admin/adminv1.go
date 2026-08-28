@@ -94,14 +94,20 @@ func checarHost(ctx context.Context, client *http.Client, host string, resultado
 
 		achou := false
 		switch {
-		case r.status == 401 || r.status == 403:
-			// Exige autenticação — confirma que existe algo ali, quase
-			// sempre um painel de fato (baixa chance de falso positivo).
-			achou = true
 		case r.status == 200 && r.hash != baseline.hash:
 			// Só conta como achado se o conteúdo for DIFERENTE do baseline
 			// 404 do site — senão é só a mesma página de erro genérica.
 			achou = true
+		case r.status == 401 || r.status == 403:
+			// O 401/403 "puro" é a fonte clássica de falso positivo em
+			// massa: muitos WAF/CDN devolvem 403 com a MESMA página de
+			// bloqueio pra qualquer path (aqui isso inflava admin-panel
+			// com 3k+ entradas de "block"). Então, além do status, exigimos
+			// que o CORPO seja diferente da página de bloqueio do baseline;
+			// se for idêntica, é falso positivo e não reporta.
+			if r.hash != baseline.hash {
+				achou = true
+			}
 		case (r.status == 301 || r.status == 302) && r.status != baseline.status:
 			achou = true
 		}

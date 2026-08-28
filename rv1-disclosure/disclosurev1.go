@@ -79,7 +79,13 @@ func checarActuator(ctx context.Context, client *http.Client, host string, resul
 			corpo, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 
-			if resp.StatusCode == 200 && len(bytes.TrimSpace(corpo)) > 2 {
+			// Só conta como exposto se o corpo PARECER resposta de Actuator:
+			// JSON com "_links" (HAL), "propertySources" (/env), "configprops",
+			// "archaius" (Spring Cloud) ou status field do health. Um 200 com
+			// HTML genérico (ex.: página de erro customizada do IIS/ASP.NET)
+			// era contado como actuator exposto e gerava dezenas de falsos
+			// positivos em massa.
+			if resp.StatusCode == 200 && pareceRespostaActuator(corpo) {
 				mu.Lock()
 				*resultados = append(*resultados, url)
 				mu.Unlock()
@@ -92,6 +98,33 @@ func checarActuator(ctx context.Context, client *http.Client, host string, resul
 			break
 		}
 	}
+}
+
+// pareceRespostaActuator decide se o corpo de uma resposta 200 realmente
+// se parece com um endpoint do Spring Boot Actuator. Isso filtra falsos
+// positivos clássicos: páginas de erro customizada (IIS/ASP.NET), HTML de
+// "not found", portais com cache, etc., que respondem 200 pra qualquer path.
+func pareceRespostaActuator(corpo []byte) bool {
+	texto := strings.ToLower(string(corpo))
+	// JSON de Actuator/HAL/Spring costuma ter um destes marcadores:
+	marcadores := []string{
+		`"_links"`, `"propertySources"`, `"configprops"`, `"archaius"`,
+		`"measurements"`, `"base-unit"`, `"service.disk"`, `"spring"`,
+	}
+	for _, m := range marcadores {
+		if strings.Contains(texto, m) {
+			return true
+		}
+	}
+	// "/actuator/health" puro: {"status":"UP"} ou {"status":"DOWN"}
+	if strings.Contains(texto, `"status":"up"`) || strings.Contains(texto, `"status":"down"`) {
+		return true
+	}
+	// "/actuator" raiz normalmente é JSON de listagem de links.
+	if strings.HasPrefix(texto, "{") && strings.Contains(texto, "actuator") {
+		return true
+	}
+	return false
 }
 
 // checarGraphQL manda uma query de introspecção mínima em cada path comum
