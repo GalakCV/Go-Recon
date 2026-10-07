@@ -161,10 +161,14 @@ func coletarCandidatos(resultadosDir string) []candidato {
 		arquivo.Close()
 	}
 
-	// Fonte 2: JS baixado (resultados/javascripts/*.js) — é onde mais
+	// Fonte 2: JS baixado (resultados/js/downloaded/*.js) — é onde mais
 	// aparece referência direta a bucket (SDK configurado no client-side,
-	// upload direto de arquivo pro storage, etc.)
-	jsDir := filepath.Join(resultadosDir, "javascripts")
+	// upload direto de arquivo pro storage, etc.).
+	// CORREÇÃO: o download grava em js/downloaded/ (rv1-js-analise.BaixarJS);
+	// antes isto apontava para "javascripts/", um diretório que nenhuma etapa
+	// cria — então o Cloud Recon nunca via os JS baixados e perdia a melhor
+	// fonte de buckets.
+	jsDir := filepath.Join(resultadosDir, "js", "downloaded")
 	if entradas, err := os.ReadDir(jsDir); err == nil {
 		for _, e := range entradas {
 			if e.IsDir() {
@@ -312,7 +316,7 @@ func CloudRecon(ctx context.Context, empresa string, testarEscrita bool) {
 
 	candidatos := coletarCandidatos(resultadosDir)
 	if len(candidatos) == 0 {
-		fmt.Println("[-] Nenhuma referência de storage em nuvem encontrada em urls.txt/javascripts/. Nada a testar.")
+		fmt.Println("[-] Nenhuma referência de storage em nuvem encontrada em urls.txt/js/downloaded/. Nada a testar.")
 		os.WriteFile(outputFile, []byte("[]"), 0644)
 		return
 	}
