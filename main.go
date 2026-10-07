@@ -9,19 +9,19 @@ import (
 	"syscall"
 	"time"
 
-	//rv1subdominios "go-recon/rv1-subdominios"
-	//rv1recongeral "go-recon/rv1-recongeral"
 	rv1crawling "go-recon/rv1-crawling"
 	rv1js "go-recon/rv1-js"
 	rv1jsanalise "go-recon/rv1-js-analise"
-	rv1tecnologia "go-recon/rv1-tecnologia"
+	rv1recongeral "go-recon/rv1-recongeral"
+	rv1subdominios "go-recon/rv1-subdominios"
 	rv1validacao "go-recon/rv1-validacao"
-	rv1admin "go-recon/rv1-admin"
-	rv1disclosure "go-recon/rv1-disclosure"
-	rv1cloud "go-recon/rv1-cloud"
-	rv1cdn "go-recon/rv1-cdn"
+	// rv1tecnologia removido: tech-detect agora vem do httpx -td (rv1-recongeral).
 	rv1db "go-recon/database_create"
 	recondash "go-recon/recon-dash"
+	rv1admin "go-recon/rv1-admin"
+	rv1cdn "go-recon/rv1-cdn"
+	rv1cloud "go-recon/rv1-cloud"
+	rv1disclosure "go-recon/rv1-disclosure"
 )
 
 // etapaTimeoutPadrao é um teto de segurança aplicado a CADA etapa do
@@ -60,18 +60,16 @@ func main() {
 		nome string
 		fn   func(ctx context.Context)
 	}{
-
-		/*
 		{
-			nome: "Subdomínios (Subfinder)",
+			nome: "Subdomínios (subfinder + puredns bruteforce)",
 			fn:   func(ctx context.Context) { rv1subdominios.Subdominios(ctx, arquivoAlvos, nomeEmpresa) },
 		},
 		{
-			nome: "Resolução de Subdomínios (Dnsx)",
+			nome: "Resolução de Subdomínios (puredns/dnsx)",
 			fn:   func(ctx context.Context) { rv1subdominios.ResolucaoSubdominios(ctx, nomeEmpresa) },
 		},
 		{
-			nome: "Recon Geral Status (HttpxStatus)",
+			nome: "Probe HTTP rico (httpx -json: status/title/tech/server)",
 			fn:   func(ctx context.Context) { rv1recongeral.HttpxStatus(ctx, nomeEmpresa) },
 		},
 		// Crawling histórico (gau/waymore/xnLinkFinder) roda ANTES da coleta
@@ -84,12 +82,11 @@ func main() {
 			nome: "Crawling histórico (Waymore)",
 			fn:   func(ctx context.Context) { rv1crawling.Waymore(ctx, arquivoAlvos, nomeEmpresa) },
 		},
-		*/
 		{
 			nome: "Crawling histórico (XnLinkFinder)",
 			fn:   func(ctx context.Context) { rv1crawling.XnLinkFinder(ctx, arquivoAlvos, nomeEmpresa) },
 		},
-	    {
+		{
 			nome: "Coleta de JavaScript (katana + histórico)",
 			fn:   func(ctx context.Context) { rv1js.ColetarJS(ctx, nomeEmpresa) },
 		},
@@ -114,10 +111,10 @@ func main() {
 			fn:   func(ctx context.Context) { rv1jsanalise.AnalisarSegredos(ctx, nomeEmpresa) },
 		},
 		// ------------------------------------------------------------------
-		{
-			nome: "Descoberta de Tecnologias (Webanalyze)",
-			fn:   func(ctx context.Context) { rv1tecnologia.WebanalyzeTech(ctx, nomeEmpresa) },
-		},
+		// Nota: a descoberta de tecnologias deixou de ser uma etapa própria
+		// (webanalyze). O httpx -td já traz o tech-detect por host no
+		// http/httpx.jsonl, numa requisição que o pipeline faz de qualquer
+		// forma — uma ferramenta a menos para o mesmo sinal.
 		{
 			nome: "Vetores de Ataque (triagem + validação + confirmação)",
 			fn:   func(ctx context.Context) { rv1validacao.ProcessarVetores(ctx, arquivoAlvos, nomeEmpresa) },

@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -28,14 +27,14 @@ import (
 //   js/urls.txt (fila priorizada)
 //        ↓  BaixarJS (seletivo, concorrente)
 //   js/downloaded/<sha1>.js
-//        ↓  ExtrairEndpoints (multi-ferramenta: jsluice + jshunter + linkfinder)
+//        ↓  ExtrairEndpoints (jsluice AST + jshunter)
 //   js/sources.jsonl          (endpoints com proveniência)
 //        ↓  agregação
 //   js/endpoints.txt, js/endpoints_full.txt, api/endpoints.txt, api/graphql.txt,
 //   js/js_parameters.txt
 //        ↓  ValidarEndpoints (httpx direcionado)
 //   api/endpoints_probed.txt
-//        ↓  AnalisarSegredos (trufflehog + gitleaks + secretfinder)
+//        ↓  AnalisarSegredos (trufflehog --only-verified)
 //   js/secrets.txt
 // ---------------------------------------------------------------------------
 
@@ -190,13 +189,13 @@ func baixarArquivo(ctx context.Context, client *http.Client, u, destino string) 
 // ExtrairEndpoints — extração multi-ferramenta com proveniência
 // ---------------------------------------------------------------------------
 
-// ExtrairEndpoints roda, para cada JS baixado, os extratores disponíveis
-// (jsluice, jshunter, linkfinder e um fallback nativo), filtra o resultado
+// ExtrairEndpoints roda, para cada JS baixado, os extratores de alta
+// precisão (jsluice AST + jshunter), filtra o resultado
 // pelos domínios/subdomínios de arquivoAlvos (descarta ruído de terceiros:
 // CDNs, analytics, plugins de terceiros, etc.) e agrega tudo em
 // js/sources.jsonl + os arquivos consolidados de endpoints.
 func ExtrairEndpoints(ctx context.Context, arquivoAlvos, empresa string) {
-	fmt.Println("[+] Extraindo endpoints dos JS (jsluice + jshunter + linkfinder)...")
+	fmt.Println("[+] Extraindo endpoints dos JS (jsluice + jshunter)...")
 
 	resultadosDir := filepath.Join(empresa, "resultados")
 	jsDir := filepath.Join(resultadosDir, "js")
@@ -443,50 +442,15 @@ func extrairDeUmJS(ctx context.Context, srcURL string, conteudo []byte) []Fonte 
 		}
 	}
 
-	// 3. linkfinder (regex agressiva).
-	if hasTool("linkfinder") {
-		tmp, err := os.CreateTemp("", "linkfinder-*.js")
-		if err == nil {
-			tmp.Write(conteudo)
-			tmpPath := tmp.Name()
-			tmp.Close()
-			defer os.Remove(tmpPath)
-
-			cmd := exec.CommandContext(ctx, "python3", buscarLinkFinder(), "-i", tmpPath, "-o", "cli")
-			outBytes, _ := cmd.Output()
-			for _, linha := range strings.Split(string(outBytes), "\n") {
-				linha = strings.TrimSpace(linha)
-				linha = strings.Trim(linha, `"'`)
-				if linha != "" {
-					adicionar(linha, "linkfinder")
-				}
-			}
-		}
-	}
-
-	// 4. Fallback nativo (regex simples) — garante saída mesmo sem ferramentas.
-	for _, ep := range extrairNativoFallback(conteudo, srcURL) {
-		adicionar(ep, "native")
-	}
+	// linkfinder (regex agressiva) e o fallback nativo foram REMOVIDOS do
+	// caminho padrão: eram a maior fonte de endpoint-lixo (pegavam qualquer
+	// "/a/b" dentro de string e atravessavam concatenações, gerando coisas
+	// como "https://site.commailtoemail"). jsluice (AST) resolve
+	// concatenação/ofuscação nativamente e jshunter cobre o resto de texto —
+	// os dois juntos entregam sinal muito mais limpo. Se quiser reativar o
+	// linkfinder no futuro, trate o que vem só dele como baixa confiança.
 
 	return out
-}
-
-// buscarLinkFinder localiza o linkfinder.py nos caminhos comuns.
-func buscarLinkFinder() string {
-	candidatos := []string{
-		"/opt/LinkFinder/linkfinder.py",
-		"/usr/local/LinkFinder/linkfinder.py",
-		"/home/ubuntu/LinkFinder/linkfinder.py",
-		"/root/LinkFinder/linkfinder.py",
-		"/home/ubuntu/Download/LinkFinder/linkfinder.py",
-	}
-	for _, c := range candidatos {
-		if fileExiste(c) {
-			return c
-		}
-	}
-	return "linkfinder.py"
 }
 
 // tierDaURL tenta inferir o tier do JS a partir do js/to_download.tsv.
@@ -688,44 +652,6 @@ func normalizarEndpoint(raw, srcURL string) string {
 }
 
 // ---------------------------------------------------------------------------
-// Fallback nativo (regex simples) para quando as ferramentas externas faltam
-// ---------------------------------------------------------------------------
-
-// CORREÇÃO: a classe de caracteres incluía aspas simples ('), que também
-// delimitam strings em JS. Isso fazia o regex "atravessar" o fim de uma
-// string JS de URL e continuar grudando o próximo literal concatenado
-// (ex: 'https://www.esri.com'+'mailto'+'email' virava
-// "https://www.esri.commailtoemail"). Sem o ' na classe, o match para
-// corretamente no fechamento da string.
-var regexURLLiteral = mustCompile(`(?i)https?://[a-zA-Z0-9._~:\-\[\]@!$&()*+,;=%/?]+`)
-var regexPathAbs = mustCompile(`["'](/[A-Za-z0-9._~\-!$&'()*+,;=:@/]{2,})["']`)
-
-func mustCompile(expr string) *regexp.Regexp {
-	return regexp.MustCompile(expr)
-}
-
-func extrairNativoFallback(conteudo []byte, _ string) []string {
-	texto := string(conteudo)
-	visto := make(map[string]struct{})
-	var out []string
-	for _, m := range regexURLLiteral.FindAllString(texto, -1) {
-		if _, ok := visto[m]; !ok {
-			visto[m] = struct{}{}
-			out = append(out, m)
-		}
-	}
-	for _, m := range regexPathAbs.FindAllStringSubmatch(texto, -1) {
-		if len(m) > 1 && strings.Contains(m[1], "/") {
-			if _, ok := visto[m[1]]; !ok {
-				visto[m[1]] = struct{}{}
-				out = append(out, m[1])
-			}
-		}
-	}
-	return out
-}
-
-// ---------------------------------------------------------------------------
 // ValidarEndpoints — validação HTTP direcionada
 // ---------------------------------------------------------------------------
 
@@ -819,13 +745,46 @@ func countLines(caminho string) (int, error) {
 }
 
 // ---------------------------------------------------------------------------
-// AnalisarSegredos — trufflehog + gitleaks + secretfinder
+// AnalisarSegredos — trufflehog --only-verified
 // ---------------------------------------------------------------------------
 
-// AnalisarSegredos roda trufflehog (primário) e gitleaks (fallback) sobre os
-// JS baixados, consolidando resultados legíveis em js/secrets.txt.
+// trufflehogResult é o subconjunto do JSON por-achado do trufflehog
+// (`trufflehog filesystem --json`). Uma linha JSON por achado.
+type trufflehogResult struct {
+	DetectorName string `json:"DetectorName"`
+	Verified     bool   `json:"Verified"`
+	Raw          string `json:"Raw"`
+	Redacted     string `json:"Redacted"`
+	SourceMeta   struct {
+		Data struct {
+			Filesystem struct {
+				File string `json:"file"`
+				Line int    `json:"line"`
+			} `json:"Filesystem"`
+		} `json:"Data"`
+	} `json:"SourceMetadata"`
+}
+
+// redigir esconde o miolo de um segredo, deixando só pontas para correlação.
+// Nunca gravamos o valor cru em disco/painel.
+func redigir(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= 8 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:4] + strings.Repeat("*", 6) + s[len(s)-4:]
+}
+
+// AnalisarSegredos roda trufflehog sobre os JS baixados e persiste APENAS
+// achados VERIFICADOS (o trufflehog testa a credencial contra a API real),
+// estruturados, deduplicados e com o valor redigido. Segredo não-verificado
+// é, na prática, ruído de recon — fica fora da saída padrão.
+//
+// Isso substitui o comportamento antigo (despejar a saída crua da ferramenta,
+// cabeçalhos e stderr linha a linha), que era a maior fonte de lixo da etapa
+// e ainda arriscava expor o próprio segredo em claro.
 func AnalisarSegredos(ctx context.Context, empresa string) {
-	fmt.Println("[+] Buscando segredos nos JS (trufflehog + gitleaks)...")
+	fmt.Println("[+] Buscando segredos VERIFICADOS nos JS (trufflehog --json)...")
 
 	resultadosDir := filepath.Join(empresa, "resultados")
 	jsDir := filepath.Join(resultadosDir, "js")
@@ -837,39 +796,59 @@ func AnalisarSegredos(ctx context.Context, empresa string) {
 		return
 	}
 
-	var linhas []string
-
-	if hasTool("trufflehog") {
-		cmd := exec.CommandContext(ctx, "trufflehog", "filesystem", downloadDir, "--no-update")
-		if out, err := cmd.Output(); err == nil {
-			linhas = append(linhas, "# trufflehog")
-			linhas = append(linhas, string(out))
-		} else if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			linhas = append(linhas, string(exitErr.Stderr))
-		}
-	} else {
-		fmt.Println("[!] trufflehog não encontrado.")
+	if !hasTool("trufflehog") {
+		fmt.Println("[!] trufflehog não encontrado — análise de segredos pulada.")
+		return
 	}
 
-	if hasTool("gitleaks") {
-		cmd := exec.CommandContext(ctx, "gitleaks", "detect", "--source", downloadDir, "--no-banner", "--report-format", "json")
-		if out, err := cmd.Output(); err == nil {
-			linhas = append(linhas, "# gitleaks")
-			var achados []map[string]interface{}
-			if json.Unmarshal(out, &achados) == nil {
-				for _, a := range achados {
-					if desc, ok := a["Description"].(string); ok {
-						linhas = append(linhas, desc)
-					}
-				}
-			} else {
-				linhas = append(linhas, string(out))
+	// --only-verified: o trufflehog só reporta o que conseguiu validar.
+	// --json: uma linha JSON por achado (parseável, sem lixo).
+	cmd := exec.CommandContext(ctx, "trufflehog", "filesystem", downloadDir,
+		"--json", "--only-verified", "--no-update")
+	out, err := cmd.Output()
+	if err != nil {
+		// trufflehog sai !=0 quando encontra achados; só desistimos se não
+		// veio saída nenhuma.
+		if len(out) == 0 {
+			if ctx.Err() == context.Canceled {
+				fmt.Println("[!] Análise de segredos cancelada.")
+				return
 			}
+			fmt.Println("[+] Nenhum segredo verificado encontrado.")
+			escreverLinhas(filepath.Join(jsDir, "secrets.txt"), nil)
+			return
 		}
-	} else {
-		fmt.Println("[!] gitleaks não encontrado.")
+	}
+
+	visto := make(map[string]struct{})
+	var linhas []string
+	for _, l := range strings.Split(string(out), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || !strings.HasPrefix(l, "{") {
+			continue
+		}
+		var r trufflehogResult
+		if json.Unmarshal([]byte(l), &r) != nil {
+			continue
+		}
+		if !r.Verified {
+			continue
+		}
+		valor := r.Redacted
+		if valor == "" {
+			valor = redigir(r.Raw)
+		}
+		arquivo := r.SourceMeta.Data.Filesystem.File
+		// chave de dedup: detector + valor redigido + arquivo
+		chave := r.DetectorName + "|" + valor + "|" + arquivo
+		if _, ok := visto[chave]; ok {
+			continue
+		}
+		visto[chave] = struct{}{}
+		linhas = append(linhas, fmt.Sprintf("[VERIFIED] %s  %s  (%s:%d)",
+			r.DetectorName, valor, arquivo, r.SourceMeta.Data.Filesystem.Line))
 	}
 
 	escreverLinhas(filepath.Join(jsDir, "secrets.txt"), linhas)
-	fmt.Printf("[+] Análise de segredos concluída: %d linhas (js/secrets.txt).\n", len(linhas))
+	fmt.Printf("[+] Segredos verificados: %d (js/secrets.txt).\n", len(linhas))
 }
